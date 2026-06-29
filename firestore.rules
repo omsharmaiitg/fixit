@@ -1,0 +1,59 @@
+rules_version = '2';
+
+// FixIt — minimum-viable security rules (CLAUDE.md §8, build plan Phase 1).
+// Signed-in users may create issues and append upvotes / discussion / DNA.
+// Nobody may delete an issue or rewrite an existing DNA entry (append-only).
+// Privileged authority actions go through server route handlers, not the client.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    // DNA must never shrink and its existing entries must never change.
+    function dnaAppendOnly() {
+      return request.resource.data.dna.size() >= resource.data.dna.size()
+        && resource.data.dna.toSet().intersection(
+             request.resource.data.dna.toSet()) == resource.data.dna.toSet();
+    }
+
+    match /issues/{issueId} {
+      allow read: if true; // public transparency
+
+      allow create: if signedIn();
+
+      // Updates allowed for signed-in users as long as DNA is only appended to
+      // (existing DNA entries are immutable) and the doc is never deleted.
+      allow update: if signedIn() && dnaAppendOnly();
+
+      allow delete: if false; // issues are a permanent record
+    }
+
+    match /users/{userId} {
+      allow read: if true;
+      allow create, update: if signedIn() && request.auth.uid == userId;
+      allow delete: if false;
+    }
+
+    match /problemZones/{zoneId} {
+      allow read: if true;
+      allow write: if signedIn(); // admin/seed tooling writes these
+    }
+
+    match /squads/{squadId} {
+      allow read: if true;
+      allow write: if signedIn();
+    }
+
+    match /hotspots/{id} {
+      allow read: if true;
+      allow write: if signedIn();
+    }
+
+    match /reports/{id} {
+      allow read: if true;
+      allow write: if signedIn();
+    }
+  }
+}

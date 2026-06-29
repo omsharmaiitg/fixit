@@ -1,26 +1,93 @@
 @import "tailwindcss";
 
+/* FixIt design tokens — CLAUDE.md §7 "civic trust".
+   Light-mode locked: this is a civic product with a single intentional
+   identity (deep institutional blue, warm amber for urgency, white cards on a
+   soft slate page). No dark-mode flip — the brand is defined in one mode. */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #f1f5f9; /* slate-100 — lets white cards lift */
+  --surface: #ffffff;
+  --foreground: #0f172a; /* slate-900 */
+  --muted: #64748b; /* slate-500 */
+
+  --primary: #1d4ed8;
+  --primary-dark: #1e3a8a;
+  --attention: #f59e0b;
+
+  /* status */
+  --status-reported: #6b7280;
+  --status-verified: #1d4ed8;
+  --status-acknowledged: #4f46e5;
+  --status-in_progress: #f59e0b;
+  --status-pending_confirmation: #9333ea;
+  --status-resolved: #16a34a;
+  --status-reopened: #dc2626;
+
+  /* aging */
+  --aging-fresh: #16a34a;
+  --aging-aging: #ca8a04;
+  --aging-neglected: #ea580c;
+  --aging-critical_neglect: #dc2626;
+  --aging-civic_failure: #1f2937;
 }
 
 @theme inline {
   --color-background: var(--background);
+  --color-surface: var(--surface);
   --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-primary: var(--primary);
+  --color-primary-dark: var(--primary-dark);
+  --color-attention: var(--attention);
+
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --font-display: var(--font-jakarta);
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
+}
+
+/* Tinted card shadow — soft, never harsh borders (§7). */
+@utility shadow-card {
+  box-shadow:
+    0 1px 2px rgb(15 23 42 / 0.04),
+    0 4px 16px rgb(15 23 42 / 0.06);
+}
+@utility shadow-card-lg {
+  box-shadow:
+    0 2px 4px rgb(15 23 42 / 0.05),
+    0 12px 32px rgb(15 23 42 / 0.10);
+}
+
+/* FAB attention pulse — a slow, calm ring, not a frantic blink. */
+@keyframes fab-pulse {
+  0% {
+    box-shadow: 0 8px 24px rgb(29 78 216 / 0.45), 0 0 0 0 rgb(29 78 216 / 0.35);
+  }
+  70% {
+    box-shadow: 0 8px 24px rgb(29 78 216 / 0.45), 0 0 0 14px rgb(29 78 216 / 0);
+  }
+  100% {
+    box-shadow: 0 8px 24px rgb(29 78 216 / 0.45), 0 0 0 0 rgb(29 78 216 / 0);
+  }
+}
+
+/* Skeleton shimmer. */
+@keyframes shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fab-pulse {
+    animation: none !important;
+  }
+}
+.fab-pulse {
+  animation: fab-pulse 2.4s ease-out infinite;
 }
