@@ -106,6 +106,11 @@ export async function runAgentLoop(opts: {
   const toolCalls: ToolCallRecord[] = [];
   const toolByName = new Map(tools.map((t) => [t.declaration.name, t]));
 
+  // Gemini can emit conversational text AND a function call in the same turn.
+  // We must not lose that text — otherwise the chat shows tool-call status lines
+  // but the assistant's actual reply never appears. Carry the latest text forward.
+  let lastText = '';
+
   for (let turn = 0; turn < maxTurns; turn++) {
     const response = await generateContentWithRetry({
       model: MODEL,
@@ -117,11 +122,13 @@ export async function runAgentLoop(opts: {
       },
     });
 
+    if (response.text) lastText = response.text;
+
     const calls = response.functionCalls ?? [];
 
     // No tool calls → the model is talking to the user. We're done this turn.
     if (calls.length === 0) {
-      return { text: response.text ?? '', toolCalls };
+      return { text: response.text || lastText, toolCalls };
     }
 
     // Preserve the model's turn verbatim (keeps functionCall parts + thoughtSignatures).
@@ -154,9 +161,10 @@ export async function runAgentLoop(opts: {
       if (finalToolNames.includes(name)) finalAction = { name, args };
     }
 
-    // A terminal tool was called (finalize / flag) → stop and hand the action back to the caller.
+    // A terminal tool was called (finalize / flag) → stop and hand the action
+    // back to the caller, along with any wrap-up text the model said with it.
     if (finalAction) {
-      return { text: '', toolCalls, finalAction };
+      return { text: response.text || lastText, toolCalls, finalAction };
     }
 
     // Feed tool results back to the model and loop.
@@ -164,7 +172,9 @@ export async function runAgentLoop(opts: {
   }
 
   return {
-    text: "I have enough to log this, but let's confirm the details on the next screen.",
+    text:
+      lastText ||
+      "I have enough to log this, but let's confirm the details on the next screen.",
     toolCalls,
   };
 }

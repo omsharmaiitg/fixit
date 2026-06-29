@@ -161,6 +161,7 @@ export function TriageChat({
         }),
       });
       const data = await res.json();
+      console.log("[triage response]", data);
       setLoading(false);
       if (!res.ok) throw new Error(data.error || "Triage failed");
 
