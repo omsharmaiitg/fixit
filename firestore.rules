@@ -1,9 +1,16 @@
 rules_version = '2';
 
-// FixIt — minimum-viable security rules (CLAUDE.md §8, build plan Phase 1).
-// Signed-in users may create issues and append upvotes / discussion / DNA.
-// Nobody may delete an issue or rewrite an existing DNA entry (append-only).
-// Privileged authority actions go through server route handlers, not the client.
+// FixIt — Firestore security rules.
+//
+// Design tension this resolves: the app supports BOTH signed-in accounts and an
+// anonymous report flow (device-cookie identity, no login). Anonymous users are
+// not authenticated, so issue create/update cannot require auth without breaking
+// reporting and community verification (upvotes/discussion). We therefore keep
+// issues publicly writable but protect their integrity (append-only DNA, no
+// deletes), and lock per-user docs to their owner.
+//
+// HARDENING NOTES (see bottom) — what to change once Firebase Auth is mandatory
+// and the Watchtower/admin move to a privileged (Admin SDK) path.
 service cloud.firestore {
   match /databases/{database}/documents {
 
@@ -19,41 +26,58 @@ service cloud.firestore {
     }
 
     match /issues/{issueId} {
-      allow read: if true; // public transparency
+      // Public read — transparency, the feed, and the login-free dashboard.
+      allow read: if true;
 
-      allow create: if signedIn();
+      // Create: open, so both anonymous (device id) and authenticated users can
+      // report. Tighten to `signedIn()` once login is mandatory.
+      allow create: if true;
 
-      // Updates allowed for signed-in users as long as DNA is only appended to
-      // (existing DNA entries are immutable) and the doc is never deleted.
-      allow update: if signedIn() && dnaAppendOnly();
+      // Update: open for community actions (upvote / verify / discussion /
+      // adopt / device→uid backfill) AND admin/Watchtower recompute, but DNA
+      // history is immutable and the doc can never be deleted.
+      allow update: if dnaAppendOnly();
 
-      allow delete: if false; // issues are a permanent record
+      allow delete: if false; // issues are a permanent public record
     }
 
     match /users/{userId} {
-      allow read: if true;
+      // A user's profile doc is private to that user.
+      allow read: if signedIn() && request.auth.uid == userId;
       allow create, update: if signedIn() && request.auth.uid == userId;
       allow delete: if false;
     }
 
+    // Intelligence + community collections written by the server path
+    // (Watchtower / admin tools) and the seed. Currently open to write because
+    // the Watchtower runs the Firebase *client* SDK unauthenticated server-side
+    // (no Admin credential). See hardening notes.
     match /problemZones/{zoneId} {
       allow read: if true;
-      allow write: if signedIn(); // admin/seed tooling writes these
+      allow write: if true;
     }
-
     match /squads/{squadId} {
       allow read: if true;
-      allow write: if signedIn();
+      allow write: if true;
     }
-
     match /hotspots/{id} {
       allow read: if true;
-      allow write: if signedIn();
+      allow write: if true;
     }
-
     match /reports/{id} {
       allow read: if true;
-      allow write: if signedIn();
+      allow write: if true;
     }
   }
 }
+
+// ─── HARDENING NOTES ─────────────────────────────────────────────────────────
+// When auth becomes mandatory and a privileged server path exists:
+//  1. issues create  → `if signedIn()`  (drop anonymous reporting).
+//  2. issues update  → `if signedIn() && dnaAppendOnly()`, and ideally split
+//     owner-only fields (title/severity) from community fields (upvoteCount,
+//     discussion, dna) with per-field checks.
+//  3. problemZones / hotspots / reports / squads → move writes to the Firebase
+//     Admin SDK (service account) and set `allow write: if false` here, OR gate
+//     on a custom `request.auth.token.admin == true` claim. The Watchtower must
+//     then authenticate (Admin SDK) instead of using the client SDK.

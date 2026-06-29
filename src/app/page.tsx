@@ -18,9 +18,18 @@ import { FilterBar } from "@/components/FilterBar";
 import { IssueCard } from "@/components/IssueCard";
 import { SkeletonCard } from "@/components/SkeletonCard";
 import { FABButton } from "@/components/FABButton";
+import { useAuth } from "@/contexts/AuthContext";
 import type { Issue } from "@/types";
 
 type Tab = "active" | "resolved";
+
+function initialsOf(name?: string | null, email?: string | null): string {
+  const base = (name || email || "").trim();
+  if (!base) return "";
+  const parts = base.split(/\s+/);
+  if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+  return base.slice(0, 2).toUpperCase();
+}
 
 // Recency of resolution = timestamp of the issue's `resolved` DNA entry,
 // falling back to updatedAt if (somehow) absent.
@@ -37,6 +46,7 @@ function greetingForHour(h: number): string {
 }
 
 export default function HomePage() {
+  const { user } = useAuth();
   const [tab, setTab] = useState<Tab>("active");
   const [distanceFilter, setDistanceFilter] = useState<number | null>(2000);
   const { userLat, userLng, requestLocation } = useLocation();
@@ -124,11 +134,18 @@ export default function HomePage() {
             <Bell size={18} strokeWidth={2} />
           </button>
           <Link
-            href="/my-reports"
-            aria-label="My reports"
-            className="flex h-9 w-9 items-center justify-center rounded-full bg-primary text-white shadow-card transition active:scale-95"
+            href="/profile"
+            aria-label={user ? "Profile" : "Sign in"}
+            className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-full bg-primary text-sm font-bold text-white shadow-card transition active:scale-95"
           >
-            <User size={18} strokeWidth={2} />
+            {user?.photoURL ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={user.photoURL} alt="avatar" className="h-full w-full object-cover" />
+            ) : user ? (
+              initialsOf(user.displayName, user.email)
+            ) : (
+              <User size={18} strokeWidth={2} />
+            )}
           </Link>
         </div>
       </header>

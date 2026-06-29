@@ -11,6 +11,7 @@ import {
   orderBy,
   increment,
   arrayUnion,
+  writeBatch,
   Timestamp,
   type DocumentData,
 } from "firebase/firestore";
@@ -117,6 +118,23 @@ export async function getIssuesByReporter(reporterId: string): Promise<Issue[]> 
   return snap.docs
     .map((d) => issueFromSnapshot(d.id, d.data()))
     .sort((a, b) => b.reportedAt.getTime() - a.reportedAt.getTime());
+}
+
+// On first sign-in, move a device's anonymous reports onto the user's account
+// by re-stamping reporterId from the device id to the auth uid. Returns how
+// many issues were migrated. No-op when there's nothing to move.
+export async function backfillDeviceReports(
+  deviceId: string,
+  uid: string,
+): Promise<number> {
+  if (!deviceId || !uid || deviceId === uid) return 0;
+  const q = query(collection(getDb(), "issues"), where("reporterId", "==", deviceId));
+  const snap = await getDocs(q);
+  if (snap.empty) return 0;
+  const batch = writeBatch(getDb());
+  snap.docs.forEach((d) => batch.update(d.ref, { reporterId: uid }));
+  await batch.commit();
+  return snap.size;
 }
 
 // Caller builds the full Issue (Appendix I). We persist it under its own id.
