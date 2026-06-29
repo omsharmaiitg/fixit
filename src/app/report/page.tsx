@@ -20,6 +20,7 @@ import {
 } from "@/lib/firebaseHelpers";
 import { calculatePressureScore } from "@/lib/pressureScore";
 import { base64ToBlob } from "@/lib/imageUtils";
+import { getReporterId } from "@/lib/reporter";
 import {
   CATEGORY_LABELS,
   CATEGORY_EMOJIS,
@@ -136,7 +137,7 @@ export default function ReportPage() {
         agingStatus: "fresh",
         location: { lat: location.lat, lng: location.lng, address: location.address },
         photoUrls,
-        reporterId: "guest",
+        reporterId: getReporterId(),
         reporterName: "You",
         coReporters: [],
         reportedAt,

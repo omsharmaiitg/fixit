@@ -114,6 +114,8 @@ export interface Issue {
   location: Location;
   photoUrls: string[];
 
+  // Generic reporter identity. Holds the anonymous per-device id today (see
+  // @/lib/reporter) and can hold a Firebase auth.uid later with no schema change.
   reporterId: string;
   reporterName: string;
   coReporters: string[];

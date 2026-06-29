@@ -2,10 +2,12 @@ import {
   collection,
   doc,
   getDoc,
+  getDocs,
   setDoc,
   updateDoc,
   onSnapshot,
   query,
+  where,
   orderBy,
   increment,
   arrayUnion,
@@ -103,6 +105,18 @@ export function subscribeToIssues(
 export async function getIssueById(id: string): Promise<Issue | null> {
   const snap = await getDoc(doc(getDb(), "issues", id));
   return snap.exists() ? issueFromSnapshot(snap.id, snap.data()) : null;
+}
+
+// All issues reported from a given identity (anonymous device id or, later,
+// auth.uid), newest first. Equality-only query → no composite index needed;
+// we sort in memory.
+export async function getIssuesByReporter(reporterId: string): Promise<Issue[]> {
+  if (!reporterId) return [];
+  const q = query(collection(getDb(), "issues"), where("reporterId", "==", reporterId));
+  const snap = await getDocs(q);
+  return snap.docs
+    .map((d) => issueFromSnapshot(d.id, d.data()))
+    .sort((a, b) => b.reportedAt.getTime() - a.reportedAt.getTime());
 }
 
 // Caller builds the full Issue (Appendix I). We persist it under its own id.

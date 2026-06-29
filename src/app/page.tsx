@@ -124,8 +124,8 @@ export default function HomePage() {
             <Bell size={18} strokeWidth={2} />
           </button>
           <Link
-            href="/profile"
-            aria-label="Profile"
+            href="/my-reports"
+            aria-label="My reports"
             className="flex h-9 w-9 items-center justify-center rounded-full bg-primary text-white shadow-card transition active:scale-95"
           >
             <User size={18} strokeWidth={2} />

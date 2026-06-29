@@ -6,6 +6,7 @@ import { getDb } from "@/lib/firebase";
 import { seedDemoData } from "@/lib/seedData";
 import { calculatePressureScore, getAgingStatus } from "@/lib/pressureScore";
 import { issueFromSnapshot } from "@/lib/firebaseHelpers";
+import { getReporterId } from "@/lib/reporter";
 
 type State = { running: boolean; message: string };
 
@@ -14,6 +15,7 @@ export default function AdminPage() {
   const [seed, setSeed] = useState<State>({ running: false, message: "" });
   const [recalc, setRecalc] = useState<State>({ running: false, message: "" });
   const [watchtower, setWatchtower] = useState<State>({ running: false, message: "" });
+  const [attach, setAttach] = useState<State>({ running: false, message: "" });
   // Server-only secret — operator pastes it; never bundled into the client.
   const [secret, setSecret] = useState("");
 
@@ -50,6 +52,31 @@ export default function AdminPage() {
       setRecalc({ running: false, message: `🔄 Recalculated ${snap.size} issues.` });
     } catch (e) {
       setRecalc({ running: false, message: `Error: ${(e as Error).message}` });
+    }
+  }
+
+  async function handleAttach() {
+    setAttach({ running: true, message: "" });
+    try {
+      const id = getReporterId();
+      const snap = await getDocs(collection(getDb(), "issues"));
+      const targets = snap.docs.slice(0, 3);
+      if (targets.length === 0) {
+        setAttach({
+          running: false,
+          message: "No issues found — seed demo data first.",
+        });
+        return;
+      }
+      const batch = writeBatch(getDb());
+      targets.forEach((d) => batch.update(d.ref, { reporterId: id }));
+      await batch.commit();
+      setAttach({
+        running: false,
+        message: `📌 Attached ${targets.length} reports to this device. Open My Reports to see them.`,
+      });
+    } catch (e) {
+      setAttach({ running: false, message: `Error: ${(e as Error).message}` });
     }
   }
 
@@ -107,6 +134,11 @@ export default function AdminPage() {
               label="🔄 Recalculate All Pressure Scores"
               state={recalc}
               onClick={handleRecalc}
+            />
+            <ToolButton
+              label="📌 Attach sample reports to this device"
+              state={attach}
+              onClick={handleAttach}
             />
             <div className="space-y-2 rounded-lg border border-gray-100 bg-gray-50 p-3">
               <input
