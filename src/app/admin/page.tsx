@@ -14,6 +14,8 @@ export default function AdminPage() {
   const [seed, setSeed] = useState<State>({ running: false, message: "" });
   const [recalc, setRecalc] = useState<State>({ running: false, message: "" });
   const [watchtower, setWatchtower] = useState<State>({ running: false, message: "" });
+  // Server-only secret — operator pastes it; never bundled into the client.
+  const [secret, setSecret] = useState("");
 
   async function handleSeed() {
     setSeed({ running: true, message: "" });
@@ -52,8 +54,29 @@ export default function AdminPage() {
   }
 
   async function handleWatchtower() {
-    // Wired in Phase 5 → POST /api/watchtower.
-    setWatchtower({ running: false, message: "🛰️ Watchtower wiring lands in Phase 5." });
+    setWatchtower({ running: true, message: "" });
+    try {
+      const res = await fetch("/api/watchtower", {
+        method: "POST",
+        headers: { "x-watchtower-secret": secret },
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Watchtower failed");
+      const parts = [
+        `scored ${data.issuesScored}`,
+        `${data.zonesDetected} zones`,
+        `${data.hotspotsPredicted} hotspots`,
+        `report ${data.reportGenerated ? "✓" : "✗"}`,
+        `${data.escalationsDrafted} escalations`,
+      ];
+      let message = `🛰️ ${parts.join(" · ")}`;
+      if (Array.isArray(data.errors) && data.errors.length) {
+        message += ` — errors: ${data.errors.join("; ")}`;
+      }
+      setWatchtower({ running: false, message });
+    } catch (e) {
+      setWatchtower({ running: false, message: `Error: ${(e as Error).message}` });
+    }
   }
 
   return (
@@ -85,11 +108,20 @@ export default function AdminPage() {
               state={recalc}
               onClick={handleRecalc}
             />
-            <ToolButton
-              label="🛰️ Run Watchtower Now"
-              state={watchtower}
-              onClick={handleWatchtower}
-            />
+            <div className="space-y-2 rounded-lg border border-gray-100 bg-gray-50 p-3">
+              <input
+                type="password"
+                value={secret}
+                onChange={(e) => setSecret(e.target.value)}
+                placeholder="Watchtower secret"
+                className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm outline-none focus:border-[#1d4ed8]"
+              />
+              <ToolButton
+                label="🛰️ Run Watchtower Now"
+                state={watchtower}
+                onClick={handleWatchtower}
+              />
+            </div>
           </div>
         )}
       </section>
