@@ -10,6 +10,8 @@ const nextConfig: NextConfig = {
     remotePatterns: [
       { protocol: "https", hostname: "firebasestorage.googleapis.com" },
       { protocol: "https", hostname: "lh3.googleusercontent.com" },
+      // Mock photos for seeded demo issues (Seed Shamli demo data).
+      { protocol: "https", hostname: "loremflickr.com" },
     ],
   },
 };

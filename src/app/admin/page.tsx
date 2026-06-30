@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { collection, getDocs, writeBatch } from "firebase/firestore";
 import { getDb } from "@/lib/firebase";
-import { seedDemoData, seedDemoIntelligence } from "@/lib/seedData";
+import { seedDemoData, seedDemoIntelligence, seedShamliData } from "@/lib/seedData";
 import { calculatePressureScore, getAgingStatus } from "@/lib/pressureScore";
 import {
   issueFromSnapshot,
@@ -38,6 +38,7 @@ export default function AdminPage() {
   const [open, setOpen] = useState(false);
   const [seed, setSeed] = useState<State>({ running: false, message: "" });
   const [seedIntel, setSeedIntel] = useState<State>({ running: false, message: "" });
+  const [seedShamli, setSeedShamli] = useState<State>({ running: false, message: "" });
   const [recalc, setRecalc] = useState<State>({ running: false, message: "" });
   const [watchtower, setWatchtower] = useState<State>({ running: false, message: "" });
   const [attach, setAttach] = useState<State>({ running: false, message: "" });
@@ -95,6 +96,21 @@ export default function AdminPage() {
       });
     } catch (e) {
       setSeedIntel({ running: false, message: `Error: ${(e as Error).message}` });
+    }
+  }
+
+  async function handleSeedShamli() {
+    setSeedShamli({ running: true, message: "" });
+    try {
+      const r = await seedShamliData();
+      setSeedShamli({
+        running: false,
+        message: r.seeded
+          ? `🌱 Seeded ${r.count} Shamli issues. Open the feed for a Shamli account.`
+          : `Skipped — ${r.count} Shamli issues already exist.`,
+      });
+    } catch (e) {
+      setSeedShamli({ running: false, message: `Error: ${(e as Error).message}` });
     }
   }
 
@@ -230,6 +246,11 @@ export default function AdminPage() {
               label="🌱 Seed demo intelligence"
               state={seedIntel}
               onClick={handleSeedIntel}
+            />
+            <ToolButton
+              label="🌱 Seed Shamli demo data"
+              state={seedShamli}
+              onClick={handleSeedShamli}
             />
             <ToolButton
               label="🔄 Recalculate All Pressure Scores"
