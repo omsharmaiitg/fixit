@@ -2,8 +2,8 @@
 
 > **AI-agent-powered civic issue reporting that closes the broken loop between citizens who *see* problems and the systems meant to *fix* them.**
 
-🔗 **Live App:** https://fixit-341094842696.asia-south1.run.app
-🏆 **Built for:** Vibe2Ship Hackathon · Coding Ninjas × Google for Developers (2026)
+**Live App:** https://fixit-341094842696.asia-south1.run.app
+**Built for:** Vibe2Ship Hackathon · Coding Ninjas × Google for Developers (2026)
 
 ---
 
@@ -13,17 +13,17 @@ Communities face a constant stream of infrastructure issues — potholes, water 
 
 ---
 
-## 💡 Two AI Agents, Not One Chatbot
+##  Two AI Agents, Not One Chatbot
 
-### 🔍 Triage Agent — *reactive*
+###  Triage Agent — *reactive*
 When a citizen reports an issue, a **Gemini function-calling tool loop** turns a short conversation + photo into a structured, geocoded, severity-rated, de-duplicated record. It *visibly* reasons across tools: geocoding the location, checking for nearby duplicates, pulling live weather, and computing a transparent severity score.
 
-### 🛰️ Watchtower Agent — *proactive*
+###  Watchtower Agent — *proactive*
 On a schedule (via Cloud Scheduler), it autonomously recomputes every issue's urgency, clusters failures into **Problem Zones** with an AI root-cause read, predicts emerging hotspots, writes a **weekly civic report**, and drafts escalations for neglected issues.
 
 ---
 
-## ✨ Key Features
+##  Key Features
 
 - **Pressure Score** — one public 0–100 urgency number per issue; rises with neglect, falls when authorities act
 - **Issue DNA** — immutable, timestamped life-story of every issue; nothing can be hidden
@@ -38,7 +38,7 @@ On a schedule (via Cloud Scheduler), it autonomously recomputes every issue's ur
 
 ---
 
-## 🛠️ Tech Stack
+##  Tech Stack
 
 | Layer | Technology |
 |---|---|
@@ -53,7 +53,7 @@ All AI and geocoding calls run server-side — API keys never reach the browser.
 
 ---
 
-## 🧭 Architecture
+##  Architecture
 
 ```
 Citizen → Triage Agent (Gemini tool loop: geocode · dedupe · weather · severity) → Issue
@@ -67,7 +67,7 @@ Public Impact Dashboard (login-free)
 
 ---
 
-## 🚀 Run Locally
+##  Run Locally
 
 ```bash
 npm install
@@ -86,7 +86,7 @@ Ships as a multi-stage Docker container with Next.js output: "standalone".
 
 ---
 
-## 🔒 Security
+##  Security
 
 - Gemini & server-side Geocoding keys are server-only — never exposed to the client
 - Browser Maps key is HTTP-referrer restricted; server geocoding key is API-restricted
