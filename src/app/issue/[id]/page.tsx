@@ -4,12 +4,24 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Image from "next/image";
 import { formatDistanceToNow } from "date-fns";
-import { ArrowLeft, MapPin, ArrowBigUp, Users, Check, SearchX } from "lucide-react";
+import {
+  ArrowLeft,
+  MapPin,
+  ArrowBigUp,
+  Users,
+  Check,
+  SearchX,
+  CircleCheck,
+  CircleX,
+} from "lucide-react";
 import {
   getIssueById,
   getSeverityLabel,
   upvoteIssue,
   cantFindIssue,
+  confirmResolution,
+  RESOLVE_CONFIRM_THRESHOLD,
+  RESOLVE_CONTRADICT_THRESHOLD,
 } from "@/lib/firebaseHelpers";
 import { calculatePressureScore, BASELINE_WEIGHT } from "@/lib/pressureScore";
 import { resolveUpvoteWeight } from "@/lib/upvoteLocation";
@@ -25,6 +37,7 @@ import {
 } from "@/lib/constants";
 import { PressureScore } from "@/components/PressureScore";
 import { IssueDNA } from "@/components/IssueDNA";
+import { BeforeAfterSlider } from "@/components/BeforeAfterSlider";
 import { useRequireAuth, LoginPrompt } from "@/components/LoginPrompt";
 import { useAuth } from "@/contexts/AuthContext";
 import type { Issue, IssueStatus } from "@/types";
@@ -114,6 +127,7 @@ export default function IssueDetailPage() {
   const [reporterId, setReporterId] = useState("");
   const [upBusy, setUpBusy] = useState(false);
   const [cfBusy, setCfBusy] = useState(false);
+  const [resolveBusy, setResolveBusy] = useState(false);
   const { promptOpen, closePrompt, requireAuth } = useRequireAuth();
 
   useEffect(() => {
@@ -160,6 +174,23 @@ export default function IssueDetailPage() {
         setIssue((prev) => prev && toggleCantFindLocal(prev, reporterId));
       } finally {
         setCfBusy(false);
+      }
+    });
+  }
+
+  // Community vote on a submitted resolution. The transition (resolved/reopened)
+  // is non-trivial, so we re-read the doc after the write rather than mirror the
+  // threshold logic optimistically.
+  function handleResolveVote(agree: boolean) {
+    requireAuth(async () => {
+      if (!reporterId || resolveBusy) return;
+      setResolveBusy(true);
+      try {
+        await confirmResolution(id, reporterId, agree);
+        const fresh = await getIssueById(id);
+        if (fresh) setIssue(fresh);
+      } finally {
+        setResolveBusy(false);
       }
     });
   }
@@ -354,6 +385,31 @@ export default function IssueDetailPage() {
             </div>
           </div>
 
+          {/* before/after on a confirmed fix */}
+          {issue.status === "resolved" &&
+            issue.resolutionPhotoUrl &&
+            issue.photoUrls[0] && (
+              <div className="rounded-2xl bg-surface p-4 shadow-card">
+                <p className="mb-3 flex items-center gap-1.5 font-display text-sm font-bold text-foreground">
+                  <Check size={16} className="text-[#16a34a]" /> Fixed — see the change
+                </p>
+                <BeforeAfterSlider
+                  beforeUrl={issue.photoUrls[0]}
+                  afterUrl={issue.resolutionPhotoUrl}
+                />
+              </div>
+            )}
+
+          {/* community confirmation window */}
+          {issue.status === "pending_confirmation" && (
+            <ResolutionConfirm
+              issue={issue}
+              reporterId={reporterId}
+              busy={resolveBusy}
+              onVote={handleResolveVote}
+            />
+          )}
+
           {/* pressure score */}
           <PressureScore
             score={issue.pressureScore}
@@ -402,6 +458,88 @@ export default function IssueDetailPage() {
       )}
 
       <LoginPrompt open={promptOpen} onClose={closePrompt} />
+    </div>
+  );
+}
+
+function ResolutionConfirm({
+  issue,
+  reporterId,
+  busy,
+  onVote,
+}: {
+  issue: Issue;
+  reporterId: string;
+  busy: boolean;
+  onVote: (agree: boolean) => void;
+}) {
+  const confirmCount = issue.resolveConfirmCount ?? 0;
+  const contradictCount = issue.resolveContradictCount ?? 0;
+  const myStance = (issue.resolveConfirmBy ?? []).includes(reporterId)
+    ? "confirm"
+    : (issue.resolveContradictBy ?? []).includes(reporterId)
+      ? "contradict"
+      : null;
+
+  return (
+    <div className="rounded-2xl bg-surface p-4 shadow-card">
+      <p className="font-display text-sm font-bold text-foreground">
+        A fix was submitted — is it actually fixed?
+      </p>
+      <p className="mt-0.5 text-xs leading-relaxed text-muted">
+        {RESOLVE_CONFIRM_THRESHOLD} confirmations marks it resolved;{" "}
+        {RESOLVE_CONTRADICT_THRESHOLD} reports of &quot;still broken&quot; reopen it.
+      </p>
+
+      {issue.resolutionPhotoUrl && (
+        <div className="relative mt-3 h-44 w-full overflow-hidden rounded-xl bg-slate-100">
+          <Image
+            src={issue.resolutionPhotoUrl}
+            alt="Submitted resolution"
+            fill
+            sizes="(max-width: 480px) 100vw, 480px"
+            className="object-cover"
+          />
+        </div>
+      )}
+
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        <button
+          onClick={() => onVote(true)}
+          disabled={busy}
+          aria-pressed={myStance === "confirm"}
+          className={`flex items-center justify-center gap-1.5 rounded-xl py-2.5 text-sm font-semibold transition active:scale-[0.98] disabled:opacity-60 ${
+            myStance === "confirm"
+              ? "bg-[#16a34a] text-white"
+              : "bg-[#16a34a]/10 text-[#15803d]"
+          }`}
+        >
+          <CircleCheck size={16} strokeWidth={2.3} /> Looks fixed
+        </button>
+        <button
+          onClick={() => onVote(false)}
+          disabled={busy}
+          aria-pressed={myStance === "contradict"}
+          className={`flex items-center justify-center gap-1.5 rounded-xl py-2.5 text-sm font-semibold transition active:scale-[0.98] disabled:opacity-60 ${
+            myStance === "contradict"
+              ? "bg-[#dc2626] text-white"
+              : "bg-[#dc2626]/10 text-[#b91c1c]"
+          }`}
+        >
+          <CircleX size={16} strokeWidth={2.3} /> Still broken
+        </button>
+      </div>
+
+      <div className="mt-3 flex items-center gap-4 text-xs font-medium text-muted">
+        <span className="flex items-center gap-1.5">
+          <span className="h-2 w-2 rounded-full bg-[#16a34a]" />
+          {confirmCount} of {RESOLVE_CONFIRM_THRESHOLD} confirmed
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="h-2 w-2 rounded-full bg-[#dc2626]" />
+          {contradictCount} say not fixed
+        </span>
+      </div>
     </div>
   );
 }

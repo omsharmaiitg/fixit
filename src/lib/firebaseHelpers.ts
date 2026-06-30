@@ -212,6 +212,192 @@ export async function updateIssueStatus(
   });
 }
 
+// ─── Resolution lifecycle ─────────────────────────────────────────────────────
+// Community thresholds for confirming a submitted resolution (CLAUDE.md §10).
+export const RESOLVE_CONFIRM_THRESHOLD = 3; // confirmations → resolved
+export const RESOLVE_CONTRADICT_THRESHOLD = 2; // contradictions → reopened
+
+// Shared authority transition: set status, recompute pressure (acknowledged/
+// in_progress carry score penalties in calculatePressureScore), and append ONE
+// immutable DNA milestone — all in a transaction so the append-only rule holds.
+// Returns the pre-transition issue so callers can notify its followers.
+async function transitionIssue(
+  issueId: string,
+  status: IssueStatus,
+  dnaSeed: Omit<DNAEntry, "id" | "timestamp">,
+  extra: Record<string, unknown> = {},
+): Promise<Issue | null> {
+  const db = getDb();
+  const ref = doc(db, "issues", issueId);
+  return runTransaction(db, async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists()) return null;
+    const issue = issueFromSnapshot(snap.id, snap.data());
+    const { score, breakdown } = calculatePressureScore({ ...issue, status });
+    tx.update(ref, {
+      status,
+      pressureScore: score,
+      pressureBreakdown: breakdown,
+      updatedAt: new Date(),
+      dna: arrayUnion({
+        id: crypto.randomUUID(),
+        timestamp: new Date(),
+        ...dnaSeed,
+      } satisfies DNAEntry),
+      ...extra,
+    });
+    return issue;
+  });
+}
+
+export async function acknowledgeIssue(issueId: string): Promise<void> {
+  const issue = await transitionIssue(issueId, "acknowledged", {
+    type: "acknowledged",
+    emoji: "🏛️",
+    label: "Acknowledged by authority",
+    actor: "authority",
+  });
+  if (issue) {
+    await notifyIssueFollowers(
+      { ...issue, status: "acknowledged" },
+      "Your issue was acknowledged",
+      `“${issue.title}” has been acknowledged by the authority.`,
+    ).catch(() => {}); // notification is best-effort, never blocks the transition
+  }
+}
+
+export async function markIssueInProgress(
+  issueId: string,
+  progressPhotoUrl?: string,
+): Promise<void> {
+  await transitionIssue(
+    issueId,
+    "in_progress",
+    {
+      type: "in_progress",
+      emoji: "🔧",
+      label: "Marked in progress",
+      actor: "authority",
+      ...(progressPhotoUrl ? { photoUrl: progressPhotoUrl } : {}),
+    },
+    progressPhotoUrl ? { photoUrls: arrayUnion(progressPhotoUrl) } : {},
+  );
+}
+
+// Mandatory after-photo → status moves to pending_confirmation and the vote
+// tallies are reset, opening the community confirm/contradict window.
+export async function submitResolution(
+  issueId: string,
+  resolutionPhotoUrl: string,
+): Promise<void> {
+  await transitionIssue(
+    issueId,
+    "pending_confirmation",
+    {
+      type: "pending_confirmation",
+      emoji: "📸",
+      label: "Resolution submitted — awaiting confirmation",
+      actor: "authority",
+      photoUrl: resolutionPhotoUrl,
+    },
+    {
+      resolutionPhotoUrl,
+      resolveConfirmBy: [],
+      resolveConfirmCount: 0,
+      resolveContradictBy: [],
+      resolveContradictCount: 0,
+    },
+  );
+}
+
+// Community vote on a submitted resolution. One stance per person (switching
+// sides moves them). Crossing CONFIRM threshold → resolved; CONTRADICT → reopened,
+// each appending an immutable DNA entry. Only votable while pending_confirmation.
+export async function confirmResolution(
+  issueId: string,
+  reporterId: string,
+  agree: boolean,
+): Promise<void> {
+  if (!reporterId) return;
+  const db = getDb();
+  const ref = doc(db, "issues", issueId);
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists()) return;
+    const issue = issueFromSnapshot(snap.id, snap.data());
+    if (issue.status !== "pending_confirmation") return;
+
+    const confirmBy = new Set(issue.resolveConfirmBy ?? []);
+    const contradictBy = new Set(issue.resolveContradictBy ?? []);
+    if (agree) {
+      confirmBy.add(reporterId);
+      contradictBy.delete(reporterId);
+    } else {
+      contradictBy.add(reporterId);
+      confirmBy.delete(reporterId);
+    }
+    const confirmArr = [...confirmBy];
+    const contradictArr = [...contradictBy];
+
+    const update: Record<string, unknown> = {
+      resolveConfirmBy: confirmArr,
+      resolveConfirmCount: confirmArr.length,
+      resolveContradictBy: contradictArr,
+      resolveContradictCount: contradictArr.length,
+      updatedAt: new Date(),
+    };
+
+    if (confirmArr.length >= RESOLVE_CONFIRM_THRESHOLD) {
+      update.status = "resolved";
+      update.dna = arrayUnion({
+        id: crypto.randomUUID(),
+        type: "resolved",
+        emoji: "🎉",
+        label: "Confirmed resolved by community",
+        timestamp: new Date(),
+        actor: "community",
+      } satisfies DNAEntry);
+    } else if (contradictArr.length >= RESOLVE_CONTRADICT_THRESHOLD) {
+      update.status = "reopened";
+      update.dna = arrayUnion({
+        id: crypto.randomUUID(),
+        type: "reopened",
+        emoji: "🔁",
+        label: "Reopened — community says it persists",
+        timestamp: new Date(),
+        actor: "community",
+      } satisfies DNAEntry);
+    }
+    tx.update(ref, update);
+  });
+}
+
+// Followers = the reporter + anyone who adopted the issue. Persists one
+// notification doc each. ponytail: write-side only — real push (FCM service
+// worker + token registration) and an in-app inbox are the documented TODO.
+export async function notifyIssueFollowers(
+  issue: Issue,
+  title: string,
+  body: string,
+): Promise<void> {
+  const uids = Array.from(
+    new Set([issue.reporterId, ...(issue.adoptedBy ?? [])]),
+  ).filter(Boolean);
+  if (uids.length === 0) return;
+  const batch = writeBatch(getDb());
+  for (const userId of uids) {
+    batch.set(doc(getDb(), "notifications", crypto.randomUUID()), {
+      userId,
+      issueId: issue.id,
+      title,
+      body,
+      read: false,
+      createdAt: new Date(),
+    });
+  }
+  await batch.commit();
+}
+
 // Toggle this reporter's upvote. Adds the id if absent (upvote), removes it if
 // present (un-upvote), keeps upvoteCount === upvotedBy.length (a true headcount),
 // and freezes the voter's proximity `weight` in upvoteWeights on cast (Part 3b).

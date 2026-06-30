@@ -156,8 +156,10 @@ export interface Issue {
   // Resolution
   resolutionPhotoUrl?: string;
   resolutionGeminiVerdict?: string;
-  resolveConfirmCount?: number;
-  resolveContradictCount?: number;
+  resolveConfirmCount?: number; // kept in sync with resolveConfirmBy.length
+  resolveContradictCount?: number; // kept in sync with resolveContradictBy.length
+  resolveConfirmBy?: string[]; // reporter ids who confirmed the fix (one stance each)
+  resolveContradictBy?: string[]; // reporter ids who say it's not fixed
 
   // Agent / intelligence layer
   problemZoneId?: string;

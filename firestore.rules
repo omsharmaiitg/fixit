@@ -61,6 +61,16 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    // Per-user notifications (issue acknowledged, etc.). Readable only by the
+    // recipient; any signed-in user may create them (an authority acting on an
+    // issue notifies the reporter/adopters). Owner may mark them read.
+    match /notifications/{id} {
+      allow read: if signedIn() && resource.data.userId == request.auth.uid;
+      allow create: if signedIn();
+      allow update: if signedIn() && resource.data.userId == request.auth.uid;
+      allow delete: if false;
+    }
+
     // Intelligence + community collections written by the server path
     // (Watchtower / admin tools) and the seed. Currently open to write because
     // the Watchtower runs the Firebase *client* SDK unauthenticated server-side
