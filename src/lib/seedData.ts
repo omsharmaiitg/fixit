@@ -121,7 +121,11 @@ function buildIssue(s: Seed, zoneId: string): Issue {
     updatedAt: new Date(now),
     upvoteCount: s.upvotes,
     nearbyUpvoteCount: s.nearbyUpvotes,
+    // Synthetic voters so seeded counts stay consistent with the upvotedBy model
+    // (upvoteCount === upvotedBy.length). Real votes add/remove the device id.
+    upvotedBy: Array.from({ length: s.upvotes }, () => crypto.randomUUID()),
     cantFindCount: 0,
+    cantFindBy: [],
     pressureScore: 0,
     pressureBreakdown: { verification: 0, age: 0, severity: 0, weather: 0 },
     dna: buildDna(s.status, reportedAt),

@@ -1,9 +1,10 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { formatDistanceToNowStrict } from "date-fns";
-import { ArrowBigUp, Dna, MessageSquare, Clock } from "lucide-react";
+import { ArrowBigUp, Dna, MessageSquare, Clock, SearchX } from "lucide-react";
 import type { Issue } from "@/types";
 import {
   CATEGORY_EMOJIS,
@@ -14,8 +15,14 @@ import {
   STATUS_COLORS,
   STATUS_LABELS,
 } from "@/lib/constants";
-import { getSeverityLabel, haversineDistance } from "@/lib/firebaseHelpers";
+import {
+  getSeverityLabel,
+  haversineDistance,
+  upvoteIssue,
+  cantFindIssue,
+} from "@/lib/firebaseHelpers";
 import { getPressureColor } from "@/lib/pressureScore";
+import { getReporterId } from "@/lib/reporter";
 
 function formatDistance(m: number): string {
   return m < 1000 ? `${Math.round(m)} m` : `${(m / 1000).toFixed(1)} km`;
@@ -45,6 +52,47 @@ export function IssueCard({
   const hasDescription =
     issue.description.trim().length > 0 &&
     issue.description.trim() !== issue.title.trim();
+
+  // Resolve the current reporter id after mount (cookie/uid aren't available
+  // during SSR, and reading them at render would cause a hydration mismatch).
+  const [reporterId, setReporterId] = useState("");
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setReporterId(getReporterId());
+  }, []);
+
+  // Active states are derived from the persisted arrays, so they're correct
+  // after a refresh and update live on the realtime feed. `busy` just guards
+  // against double-firing while the toggle write is in flight.
+  const upvoteActive = reporterId !== "" && (issue.upvotedBy ?? []).includes(reporterId);
+  const cantFindActive = reporterId !== "" && (issue.cantFindBy ?? []).includes(reporterId);
+  const [upBusy, setUpBusy] = useState(false);
+  const [cfBusy, setCfBusy] = useState(false);
+
+  // The card is a <Link>; action buttons must not bubble into navigation.
+  async function handleUpvote(e: React.MouseEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!reporterId || upBusy) return;
+    setUpBusy(true);
+    try {
+      await upvoteIssue(issue.id, reporterId);
+    } finally {
+      setUpBusy(false);
+    }
+  }
+
+  async function handleCantFind(e: React.MouseEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!reporterId || cfBusy) return;
+    setCfBusy(true);
+    try {
+      await cantFindIssue(issue.id, reporterId);
+    } finally {
+      setCfBusy(false);
+    }
+  }
 
   return (
     <Link
@@ -109,7 +157,7 @@ export function IssueCard({
             )}
           </p>
 
-          {/* row 5 — aging + status */}
+          {/* row 5 — aging + status + time */}
           <div className="mt-1.5 flex items-center gap-2 text-[11px]">
             <span className="flex items-center gap-1 font-medium text-muted">
               <span
@@ -127,24 +175,50 @@ export function IssueCard({
             >
               {STATUS_LABELS[issue.status]}
             </span>
+            <span className="ml-auto flex items-center gap-1 font-medium text-muted">
+              <Clock size={12} strokeWidth={2.2} />
+              {formatDistanceToNowStrict(issue.reportedAt)} ago
+            </span>
           </div>
 
-          {/* row 6 — engagement */}
-          <div className="mt-1.5 flex items-center gap-3 text-[11px] font-semibold text-muted">
-            <span className="flex items-center gap-1">
-              <ArrowBigUp size={14} strokeWidth={2.2} />
+          {/* row 6 — actions (must not bubble to the card link) */}
+          <div className="mt-2 flex items-center gap-2 text-[11px] font-semibold">
+            <button
+              onClick={handleUpvote}
+              disabled={upBusy}
+              aria-pressed={upvoteActive}
+              aria-label={upvoteActive ? "Remove your upvote" : "Upvote this issue"}
+              className={`flex items-center gap-1 rounded-full px-2 py-1 transition active:scale-95 disabled:opacity-60 ${
+                upvoteActive ? "bg-primary/10 text-primary" : "bg-slate-100 text-muted"
+              }`}
+            >
+              <ArrowBigUp
+                size={14}
+                strokeWidth={2.4}
+                fill={upvoteActive ? "currentColor" : "none"}
+              />
               {issue.upvoteCount}
-            </span>
+            </button>
+
             {issue.discussion.length > 0 && (
-              <span className="flex items-center gap-1">
+              <span className="flex items-center gap-1 text-muted">
                 <MessageSquare size={12} strokeWidth={2.2} />
                 {issue.discussion.length}
               </span>
             )}
-            <span className="ml-auto flex items-center gap-1 font-medium">
-              <Clock size={12} strokeWidth={2.2} />
-              {formatDistanceToNowStrict(issue.reportedAt)} ago
-            </span>
+
+            <button
+              onClick={handleCantFind}
+              disabled={cfBusy}
+              aria-pressed={cantFindActive}
+              aria-label="Report that you can't find this issue"
+              className={`ml-auto flex items-center gap-1 rounded-full px-2 py-1 transition active:scale-95 disabled:opacity-60 ${
+                cantFindActive ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-muted"
+              }`}
+            >
+              <SearchX size={12} strokeWidth={2.2} />
+              {cantFindActive ? "Can't find ✓" : "Can't find"}
+            </button>
           </div>
         </div>
       </div>

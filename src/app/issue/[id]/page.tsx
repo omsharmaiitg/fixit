@@ -4,8 +4,15 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Image from "next/image";
 import { formatDistanceToNow } from "date-fns";
-import { ArrowLeft, MapPin, ArrowBigUp, Users, Check } from "lucide-react";
-import { getIssueById, getSeverityLabel } from "@/lib/firebaseHelpers";
+import { ArrowLeft, MapPin, ArrowBigUp, Users, Check, SearchX } from "lucide-react";
+import {
+  getIssueById,
+  getSeverityLabel,
+  upvoteIssue,
+  cantFindIssue,
+} from "@/lib/firebaseHelpers";
+import { calculatePressureScore } from "@/lib/pressureScore";
+import { getReporterId } from "@/lib/reporter";
 import {
   CATEGORY_EMOJIS,
   CATEGORY_LABELS,
@@ -26,6 +33,29 @@ const STEP_ORDER: IssueStatus[] = [
   "in_progress",
   "resolved",
 ];
+
+// Toggle this reporter's upvote on a local copy of the issue, keeping
+// upvoteCount === upvotedBy.length and recomputing pressure. Its own inverse,
+// so calling it again reverts an optimistic update.
+function toggleUpvoteLocal(issue: Issue, reporterId: string): Issue {
+  const upvotedBy = [...(issue.upvotedBy ?? [])];
+  const i = upvotedBy.indexOf(reporterId);
+  if (i >= 0) upvotedBy.splice(i, 1);
+  else upvotedBy.push(reporterId);
+  const next = { ...issue, upvotedBy, upvoteCount: upvotedBy.length };
+  const { score, breakdown } = calculatePressureScore(next);
+  next.pressureScore = score;
+  next.pressureBreakdown = breakdown;
+  return next;
+}
+
+function toggleCantFindLocal(issue: Issue, reporterId: string): Issue {
+  const cantFindBy = [...(issue.cantFindBy ?? [])];
+  const i = cantFindBy.indexOf(reporterId);
+  if (i >= 0) cantFindBy.splice(i, 1);
+  else cantFindBy.push(reporterId);
+  return { ...issue, cantFindBy, cantFindCount: cantFindBy.length };
+}
 
 function StatusTimeline({ status }: { status: IssueStatus }) {
   const reopened = status === "reopened";
@@ -70,6 +100,47 @@ export default function IssueDetailPage() {
   const [issue, setIssue] = useState<Issue | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [reporterId, setReporterId] = useState("");
+  const [upBusy, setUpBusy] = useState(false);
+  const [cfBusy, setCfBusy] = useState(false);
+
+  useEffect(() => {
+    // Reporter id isn't available during SSR; resolve it after mount.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setReporterId(getReporterId());
+  }, []);
+
+  const upvoteActive =
+    reporterId !== "" && !!issue && (issue.upvotedBy ?? []).includes(reporterId);
+  const cantFindActive =
+    reporterId !== "" && !!issue && (issue.cantFindBy ?? []).includes(reporterId);
+
+  // Toggle: optimistic local update (its own inverse on error), then persist.
+  async function handleUpvote() {
+    if (!reporterId || upBusy) return;
+    setUpBusy(true);
+    setIssue((prev) => prev && toggleUpvoteLocal(prev, reporterId));
+    try {
+      await upvoteIssue(id, reporterId);
+    } catch {
+      setIssue((prev) => prev && toggleUpvoteLocal(prev, reporterId));
+    } finally {
+      setUpBusy(false);
+    }
+  }
+
+  async function handleCantFind() {
+    if (!reporterId || cfBusy) return;
+    setCfBusy(true);
+    setIssue((prev) => prev && toggleCantFindLocal(prev, reporterId));
+    try {
+      await cantFindIssue(id, reporterId);
+    } catch {
+      setIssue((prev) => prev && toggleCantFindLocal(prev, reporterId));
+    } finally {
+      setCfBusy(false);
+    }
+  }
 
   useEffect(() => {
     let alive = true;
@@ -208,7 +279,7 @@ export default function IssueDetailPage() {
               </p>
             )}
 
-            <div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-3">
+            <div className="mt-3 flex items-center gap-2 border-t border-slate-100 pt-3">
               <span className="flex items-center gap-1.5 text-sm font-medium text-muted">
                 <span
                   className="inline-block h-2.5 w-2.5 rounded-full"
@@ -216,10 +287,36 @@ export default function IssueDetailPage() {
                 />
                 {AGING_LABELS[issue.agingStatus]}
               </span>
-              <span className="flex items-center gap-1 text-sm font-semibold text-foreground">
-                <ArrowBigUp size={17} strokeWidth={2.2} />
-                {issue.upvoteCount} upvotes
-              </span>
+
+              <button
+                onClick={handleUpvote}
+                disabled={upBusy}
+                aria-pressed={upvoteActive}
+                aria-label={upvoteActive ? "Remove your upvote" : "Upvote this issue"}
+                className={`ml-auto flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-semibold transition active:scale-95 disabled:opacity-60 ${
+                  upvoteActive ? "bg-primary/10 text-primary" : "bg-slate-100 text-foreground"
+                }`}
+              >
+                <ArrowBigUp
+                  size={17}
+                  strokeWidth={2.2}
+                  fill={upvoteActive ? "currentColor" : "none"}
+                />
+                {issue.upvoteCount} {issue.upvoteCount === 1 ? "upvote" : "upvotes"}
+              </button>
+
+              <button
+                onClick={handleCantFind}
+                disabled={cfBusy}
+                aria-pressed={cantFindActive}
+                aria-label="Report that you can't find this issue"
+                className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-semibold transition active:scale-95 disabled:opacity-60 ${
+                  cantFindActive ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-muted"
+                }`}
+              >
+                <SearchX size={16} strokeWidth={2.2} />
+                {cantFindActive ? "Can't find ✓" : "Can't find"}
+              </button>
             </div>
           </div>
 

@@ -123,9 +123,11 @@ export interface Issue {
   reportedAt: Date;
   updatedAt: Date;
 
-  upvoteCount: number;
+  upvoteCount: number; // kept in sync with upvotedBy.length
+  upvotedBy: string[]; // reporter ids (device id or auth uid) who upvoted — toggle source of truth
   nearbyUpvoteCount: number; // upvotes from within ≤50m, weighted 1.5× in pressure
-  cantFindCount: number;
+  cantFindCount: number; // kept in sync with cantFindBy.length
+  cantFindBy?: string[]; // reporter ids who flagged "can't find"
 
   pressureScore: number;
   pressureBreakdown: PressureBreakdown;

@@ -12,10 +12,12 @@ import {
   increment,
   arrayUnion,
   writeBatch,
+  runTransaction,
   Timestamp,
   type DocumentData,
 } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { calculatePressureScore } from "@/lib/pressureScore";
 import { getDb, getFirebaseStorage } from "@/lib/firebase";
 import { getAgingStatus } from "@/lib/pressureScore";
 import type {
@@ -155,18 +157,57 @@ export async function updateIssueStatus(
   });
 }
 
-export async function upvoteIssue(issueId: string, isNearby = false): Promise<void> {
-  await updateDoc(doc(getDb(), "issues", issueId), {
-    upvoteCount: increment(1),
-    ...(isNearby ? { nearbyUpvoteCount: increment(1) } : {}),
-    updatedAt: new Date(),
+// Toggle this reporter's upvote. Adds the id if absent (upvote), removes it if
+// present (un-upvote), keeps upvoteCount === upvotedBy.length, and recomputes the
+// pressure score. Runs in a transaction so concurrent votes don't clobber each
+// other. Never touches `dna`, so the append-only Firestore rule passes.
+export async function upvoteIssue(issueId: string, reporterId: string): Promise<void> {
+  if (!reporterId) return;
+  const db = getDb();
+  const ref = doc(db, "issues", issueId);
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists()) return;
+    const issue = issueFromSnapshot(snap.id, snap.data());
+    const upvotedBy = [...(issue.upvotedBy ?? [])];
+    const i = upvotedBy.indexOf(reporterId);
+    if (i >= 0) upvotedBy.splice(i, 1);
+    else upvotedBy.push(reporterId);
+
+    const { score, breakdown } = calculatePressureScore({
+      ...issue,
+      upvotedBy,
+      upvoteCount: upvotedBy.length,
+    });
+    tx.update(ref, {
+      upvotedBy,
+      upvoteCount: upvotedBy.length,
+      pressureScore: score,
+      pressureBreakdown: breakdown,
+      updatedAt: new Date(),
+    });
   });
 }
 
-export async function cantFindIssue(issueId: string): Promise<void> {
-  await updateDoc(doc(getDb(), "issues", issueId), {
-    cantFindCount: increment(1),
-    updatedAt: new Date(),
+// Toggle this reporter's "can't find" flag. Keeps cantFindCount === cantFindBy.length.
+export async function cantFindIssue(issueId: string, reporterId: string): Promise<void> {
+  if (!reporterId) return;
+  const db = getDb();
+  const ref = doc(db, "issues", issueId);
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists()) return;
+    const issue = issueFromSnapshot(snap.id, snap.data());
+    const cantFindBy = [...(issue.cantFindBy ?? [])];
+    const i = cantFindBy.indexOf(reporterId);
+    if (i >= 0) cantFindBy.splice(i, 1);
+    else cantFindBy.push(reporterId);
+
+    tx.update(ref, {
+      cantFindBy,
+      cantFindCount: cantFindBy.length,
+      updatedAt: new Date(),
+    });
   });
 }
 

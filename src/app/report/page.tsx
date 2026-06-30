@@ -143,8 +143,10 @@ export default function ReportPage() {
         reportedAt,
         updatedAt: reportedAt,
         upvoteCount: 0,
+        upvotedBy: [],
         nearbyUpvoteCount: 0,
         cantFindCount: 0,
+        cantFindBy: [],
         pressureScore: 0,
         pressureBreakdown: { verification: 0, age: 0, severity: 0, weather: 0 },
         dna: [
