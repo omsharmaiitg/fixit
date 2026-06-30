@@ -37,7 +37,31 @@ const ESCALATION_PRESSURE = 70;
 const ESCALATION_MIN_AGE_DAYS = 7;
 const MAX_ESCALATIONS = 5; // cap Gemini work per run
 
-export async function runWatchtower(): Promise<WatchtowerSummary> {
+// Stable, filesystem-safe key from a city name (for per-city doc ids).
+const citySlug = (name: string) =>
+  name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") ||
+  "unknown";
+
+function distinctCityNames(issues: Issue[]): string[] {
+  const set = new Set<string>();
+  for (const i of issues) {
+    const c = i.cityName?.trim();
+    if (c) set.add(c);
+  }
+  return [...set];
+}
+
+// The active city to scope this run to. When omitted (e.g. a global scheduler
+// run), the Watchtower produces one report + hotspot set per distinct city.
+export interface WatchtowerCity {
+  cityName: string;
+  cityLat?: number;
+  cityLng?: number;
+}
+
+export async function runWatchtower(
+  activeCity?: WatchtowerCity,
+): Promise<WatchtowerSummary> {
   const db = getDb();
   const summary: WatchtowerSummary = {
     ranAt: new Date().toISOString(),
@@ -95,32 +119,47 @@ export async function runWatchtower(): Promise<WatchtowerSummary> {
     summary.errors.push(`zones: ${msg(e)}`);
   }
 
-  // (c) Predict up to 3 hotspots from the 30-day corpus.
-  try {
-    const hotspots = await predictHotspots(issues);
-    await Promise.all(
-      hotspots.map((h) => {
-        const { id, ...rest } = h;
-        return setDoc(doc(db, "hotspots", id), stripUndefined(rest), { merge: true });
-      }),
-    );
-    summary.hotspotsPredicted = hotspots.length;
-  } catch (e) {
-    summary.errors.push(`hotspots: ${msg(e)}`);
-  }
+  // (c)+(d) Per-city intelligence: hotspot forecasts + the weekly civic report,
+  // each scoped to issues whose cityName matches — so a city never shows another
+  // city's data. The caller's active city scopes a manual run; a global run
+  // produces one set per distinct city. Outputs carry cityName and are keyed per
+  // city so cities never overwrite or borrow each other's record.
+  const targetCities = activeCity?.cityName
+    ? [activeCity.cityName]
+    : distinctCityNames(issues);
+  const today = new Date().toISOString().slice(0, 10);
 
-  // (d) Weekly civic report.
-  try {
-    const report = await generateWeeklyReport(issues);
-    const id = `report-${new Date().toISOString().slice(0, 10)}`;
-    await setDoc(
-      doc(db, "reports", id),
-      stripUndefined({ ...report, generatedAt: new Date() }),
-      { merge: true },
-    );
-    summary.reportGenerated = true;
-  } catch (e) {
-    summary.errors.push(`report: ${msg(e)}`);
+  for (const cityName of targetCities) {
+    const cityIssues = issues.filter((i) => i.cityName === cityName);
+    if (cityIssues.length === 0) continue; // empty city → no borrowed data
+
+    // (c) Predict up to 3 hotspots from this city's 30-day corpus.
+    try {
+      const hotspots = await predictHotspots(cityIssues, cityName);
+      await Promise.all(
+        hotspots.map((h) => {
+          const { id, ...rest } = h;
+          return setDoc(doc(db, "hotspots", id), stripUndefined(rest), { merge: true });
+        }),
+      );
+      summary.hotspotsPredicted += hotspots.length;
+    } catch (e) {
+      summary.errors.push(`hotspots (${cityName}): ${msg(e)}`);
+    }
+
+    // (d) Weekly civic report for this city.
+    try {
+      const report = await generateWeeklyReport(cityIssues);
+      const id = `report-${citySlug(cityName)}-${today}`;
+      await setDoc(
+        doc(db, "reports", id),
+        stripUndefined({ ...report, cityName, generatedAt: new Date() }),
+        { merge: true },
+      );
+      summary.reportGenerated = true;
+    } catch (e) {
+      summary.errors.push(`report (${cityName}): ${msg(e)}`);
+    }
   }
 
   // (e) Escalation memos for neglected, high-pressure, unacknowledged issues.
@@ -155,7 +194,10 @@ export async function runWatchtower(): Promise<WatchtowerSummary> {
 
 // ─── Gemini-backed steps (structured output) ─────────────────────────────────
 
-async function predictHotspots(issues: Issue[]): Promise<PredictedHotspot[]> {
+async function predictHotspots(
+  issues: Issue[],
+  cityName?: string,
+): Promise<PredictedHotspot[]> {
   const recent = issues.filter((i) => daysSince(i.reportedAt) <= 30);
   if (recent.length < 3) return [];
 
@@ -202,8 +244,9 @@ async function predictHotspots(issues: Issue[]): Promise<PredictedHotspot[]> {
     },
   });
 
+  const prefix = cityName ? `${citySlug(cityName)}_` : "";
   return (result.hotspots ?? []).slice(0, 3).map((h) => ({
-    id: `hotspot_${Number(h.lat).toFixed(3)}_${Number(h.lng).toFixed(3)}`,
+    id: `hotspot_${prefix}${Number(h.lat).toFixed(3)}_${Number(h.lng).toFixed(3)}`,
     lat: Number(h.lat),
     lng: Number(h.lng),
     category: asCategory(h.category),
@@ -213,6 +256,7 @@ async function predictHotspots(issues: Issue[]): Promise<PredictedHotspot[]> {
     reasoning: h.reasoning,
     radiusM: Number(h.radiusM ?? 200),
     predictedAt: new Date(),
+    ...(cityName ? { cityName } : {}),
   }));
 }
 

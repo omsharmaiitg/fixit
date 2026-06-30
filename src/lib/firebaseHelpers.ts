@@ -145,6 +145,7 @@ export async function getPredictedHotspots(): Promise<PredictedHotspot[]> {
 // shows only the newest. Shape mirrors watchtowerAgent's WeeklyReport + meta.
 export interface WeeklyCivicReport {
   id: string;
+  cityName?: string; // the city this report covers (scopes the dashboard)
   glance: string;
   highlight: string;
   theShame: string;
@@ -154,12 +155,18 @@ export interface WeeklyCivicReport {
   generatedAt: Date;
 }
 
-export async function getLatestReport(): Promise<WeeklyCivicReport | null> {
+// Newest report, optionally scoped to one city. When cityName is given, reports
+// from other cities are ignored entirely (no borrowing another city's record).
+export async function getLatestReport(
+  cityName?: string,
+): Promise<WeeklyCivicReport | null> {
   const snap = await getDocs(collection(getDb(), "reports"));
   if (snap.empty) return null;
-  const reports = snap.docs.map(
+  let reports = snap.docs.map(
     (d) => tsToDate({ ...d.data(), id: d.id }) as WeeklyCivicReport,
   );
+  if (cityName) reports = reports.filter((r) => r.cityName === cityName);
+  if (reports.length === 0) return null;
   reports.sort(
     (a, b) => (b.generatedAt?.getTime() ?? 0) - (a.generatedAt?.getTime() ?? 0),
   );

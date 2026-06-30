@@ -15,6 +15,7 @@ import {
 } from "@/lib/firebaseHelpers";
 import { getReporterId } from "@/lib/reporter";
 import { useAuth } from "@/contexts/AuthContext";
+import { useLocationContext } from "@/contexts/LocationContext";
 import { STATUS_LABELS, STATUS_COLORS, CATEGORY_EMOJIS } from "@/lib/constants";
 import type { Issue } from "@/types";
 
@@ -35,6 +36,7 @@ async function clearCollection(name: string): Promise<number> {
 
 export default function AdminPage() {
   const { user } = useAuth();
+  const { activeCity } = useLocationContext();
   const [open, setOpen] = useState(false);
   const [seed, setSeed] = useState<State>({ running: false, message: "" });
   const [seedIntel, setSeedIntel] = useState<State>({ running: false, message: "" });
@@ -195,9 +197,23 @@ export default function AdminPage() {
   async function handleWatchtower() {
     setWatchtower({ running: true, message: "" });
     try {
+      // Scope the run to the city currently being viewed (Phase 1 model), so
+      // the report + forecasts reflect that city only.
       const res = await fetch("/api/watchtower", {
         method: "POST",
-        headers: { "x-watchtower-secret": secret },
+        headers: {
+          "x-watchtower-secret": secret,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(
+          activeCity
+            ? {
+                cityName: activeCity.cityName,
+                cityLat: activeCity.cityLat,
+                cityLng: activeCity.cityLng,
+              }
+            : {},
+        ),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Watchtower failed");

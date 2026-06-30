@@ -245,4 +245,5 @@ export interface PredictedHotspot {
   reasoning: string;
   radiusM: number;
   predictedAt: Date;
+  cityName?: string; // city this forecast belongs to — scopes the dashboard
 }

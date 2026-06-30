@@ -30,7 +30,7 @@ import {
   haversineDistance,
   type WeeklyCivicReport,
 } from "@/lib/firebaseHelpers";
-import { useCity } from "@/hooks/useCity";
+import { useLocationContext } from "@/contexts/LocationContext";
 import { CityPicker } from "@/components/CityPicker";
 import { CATEGORY_EMOJIS, CATEGORY_LABELS } from "@/lib/constants";
 import type { City } from "@/lib/city";
@@ -97,18 +97,19 @@ interface DashboardData {
   report: WeeklyCivicReport | null;
 }
 
-function useDashboardData() {
+function useDashboardData(cityName?: string) {
   const [data, setData] = useState<DashboardData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [nonce, setNonce] = useState(0);
 
   useEffect(() => {
+    if (!cityName) return; // wait until we know which city we're showing
     let alive = true;
     Promise.all([
       getAllIssues(),
       getProblemZones(),
       getPredictedHotspots(),
-      getLatestReport(),
+      getLatestReport(cityName), // report scoped to this city only
     ])
       .then(([issues, zones, hotspots, report]) => {
         if (alive) setData({ issues, zones, hotspots, report });
@@ -117,7 +118,7 @@ function useDashboardData() {
     return () => {
       alive = false;
     };
-  }, [nonce]);
+  }, [nonce, cityName]);
 
   // Reset to the loading state here (event handler), not in the effect, so the
   // effect never calls setState synchronously.
@@ -133,8 +134,10 @@ function useDashboardData() {
 // ─── page ────────────────────────────────────────────────────────────────────
 
 export default function DashboardPage() {
-  const { data, error, refresh } = useDashboardData();
-  const { city, resolved: cityResolved, setCity } = useCity();
+  // Phase 1 location model: the dashboard reflects the city currently being
+  // viewed (home, or another city while exploring).
+  const { activeCity, needsCityPrompt, pickHomeCity } = useLocationContext();
+  const { data, error, refresh } = useDashboardData(activeCity?.cityName);
 
   return (
     <div className="min-h-[100dvh] w-full bg-background">
@@ -142,10 +145,10 @@ export default function DashboardPage() {
         <TopBar />
 
         {error && <ErrorBlock message={error} onRetry={refresh} />}
-        {!error && !cityResolved && <LoadingState />}
-        {!error && cityResolved && !city && <CityGate onPick={setCity} />}
-        {!error && cityResolved && city && !data && <LoadingState />}
-        {!error && cityResolved && city && data && <Dashboard data={data} city={city} />}
+        {!error && needsCityPrompt && <CityGate onPick={pickHomeCity} />}
+        {!error && !needsCityPrompt && !activeCity && <LoadingState />}
+        {!error && activeCity && !data && <LoadingState />}
+        {!error && activeCity && data && <Dashboard data={data} city={activeCity} />}
       </div>
     </div>
   );
@@ -192,14 +195,14 @@ function TopBar() {
 }
 
 function Dashboard({ data, city }: { data: DashboardData; city: City }) {
-  // Scope every metric to within 65km of the chosen city center — same rule as
-  // the home feed, applied to issues, zones, and hotspots alike.
+  // Scope strictly to this city. Issues and forecasts match cityName exactly
+  // (so we never borrow another city's data); zones carry only coordinates, so
+  // they fall back to a 65km geo-fence around the city center.
   const inCity = (lat: number, lng: number) =>
     haversineDistance(city.cityLat, city.cityLng, lat, lng) <= CITY_RADIUS_M;
 
   const issues = useMemo(
-    () => data.issues.filter((i) => inCity(i.location.lat, i.location.lng)),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    () => data.issues.filter((i) => i.cityName === city.cityName),
     [data.issues, city],
   );
   const zones = useMemo(
@@ -208,8 +211,7 @@ function Dashboard({ data, city }: { data: DashboardData; city: City }) {
     [data.zones, city],
   );
   const hotspots = useMemo(
-    () => data.hotspots.filter((h) => inCity(h.lat, h.lng)),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    () => data.hotspots.filter((h) => h.cityName === city.cityName),
     [data.hotspots, city],
   );
   const report = data.report;
@@ -277,7 +279,7 @@ function Dashboard({ data, city }: { data: DashboardData; city: City }) {
 
       <HotspotsSection hotspots={hotspots} />
 
-      <WeeklyReportSection report={report} />
+      <WeeklyReportSection report={report} cityName={city.cityName} />
     </div>
   );
 }
@@ -570,13 +572,20 @@ function HotspotsSection({ hotspots }: { hotspots: PredictedHotspot[] }) {
 
 // ─── weekly report ───────────────────────────────────────────────────────────
 
-function WeeklyReportSection({ report }: { report: WeeklyCivicReport | null }) {
+function WeeklyReportSection({
+  report,
+  cityName,
+}: {
+  report: WeeklyCivicReport | null;
+  cityName: string;
+}) {
   if (!report) {
     return (
       <Reveal>
         <SectionHeading icon={ScrollText} title="This week's civic report" />
         <EmptyNote>
-          No report generated yet. The Watchtower writes one on its weekly run.
+          No civic report yet for {cityName}. The Watchtower writes one on its
+          weekly run — trigger it from Admin → Developer Tools to generate one now.
         </EmptyNote>
       </Reveal>
     );
