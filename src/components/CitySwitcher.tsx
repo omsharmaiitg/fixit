@@ -1,0 +1,112 @@
+"use client";
+
+// Two-mode city control for the profile/edit section.
+//   📍 Your current location — shows the resolved homeCity (the default).
+//   🔭 See how other cities are doing — pick another city to *explore*. This
+//      mode is logged-in only; a guest tapping it gets a sign-in prompt instead
+//      of the picker. Exploring sets activeCity and never touches homeCity.
+
+import { useState } from "react";
+import Link from "next/link";
+import { MapPin, Globe, LogIn } from "lucide-react";
+import { useAuth } from "@/contexts/AuthContext";
+import { useLocationContext } from "@/contexts/LocationContext";
+import { CityPicker } from "@/components/CityPicker";
+
+type Mode = "current" | "explore";
+
+const SOURCE_NOTE: Record<string, string> = {
+  gps: "Set from your live location.",
+  "profile-fallback": "Saved to your profile — used when GPS is unavailable.",
+  "guest-picked": "Chosen by you for browsing.",
+};
+
+export function CitySwitcher() {
+  const { user } = useAuth();
+  const { homeCity, activeCity, isExploring, locationSource, setActiveCity } =
+    useLocationContext();
+  const [mode, setMode] = useState<Mode>("current");
+
+  return (
+    <div>
+      {/* mode tabs */}
+      <div className="flex gap-1 rounded-full bg-background p-1">
+        <TabButton active={mode === "current"} onClick={() => setMode("current")}>
+          📍 Your current location
+        </TabButton>
+        <TabButton active={mode === "explore"} onClick={() => setMode("explore")}>
+          🔭 See how other cities are doing
+        </TabButton>
+      </div>
+
+      {mode === "current" ? (
+        <div className="mt-3">
+          {homeCity ? (
+            <>
+              <p className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
+                <MapPin size={15} className="shrink-0 text-primary" strokeWidth={2.2} />
+                {homeCity.cityName}
+              </p>
+              {locationSource && SOURCE_NOTE[locationSource] && (
+                <p className="mt-1 text-xs text-muted">{SOURCE_NOTE[locationSource]}</p>
+              )}
+            </>
+          ) : (
+            <p className="text-sm text-muted">Pinpointing your location…</p>
+          )}
+        </div>
+      ) : !user ? (
+        // Guest path — explore is a member feature.
+        <div className="mt-3 rounded-xl border border-slate-200 bg-background p-3.5">
+          <p className="text-sm font-semibold text-foreground">
+            Sign in to explore other cities
+          </p>
+          <p className="mt-1 text-xs text-muted">
+            Browsing how other cities are doing is available to members. Create a
+            free account to look around.
+          </p>
+          <Link
+            href="/auth"
+            className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-primary px-4 py-2 text-sm font-semibold text-white transition active:scale-95"
+          >
+            <LogIn size={15} strokeWidth={2.2} /> Sign in / Register
+          </Link>
+        </div>
+      ) : (
+        <div className="mt-3">
+          <p className="mb-2 flex items-center gap-1.5 text-xs text-muted">
+            <Globe size={14} className="shrink-0 text-primary" strokeWidth={2.2} />
+            Pick a city to look around. This doesn&apos;t change your home city.
+          </p>
+          <CityPicker onPick={setActiveCity} initialName={activeCity?.cityName} />
+          {isExploring && activeCity && (
+            <p className="mt-2 text-xs font-medium text-foreground">
+              Now exploring <span className="font-bold">{activeCity.cityName}</span>.
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TabButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`flex-1 rounded-full px-2 py-2 text-[11px] font-semibold leading-tight transition active:scale-[0.98] ${
+        active ? "bg-primary text-white shadow-card" : "text-muted hover:text-foreground"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}

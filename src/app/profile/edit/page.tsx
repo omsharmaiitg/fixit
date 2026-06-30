@@ -7,10 +7,9 @@ import { motion } from "motion/react";
 import { updateProfile } from "firebase/auth";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { doc, getDoc, setDoc } from "firebase/firestore";
-import { ArrowLeft, Camera, Loader2, Check, MapPin } from "lucide-react";
+import { ArrowLeft, Camera, Loader2, Check } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
-import { useCity } from "@/hooks/useCity";
-import { CityPicker } from "@/components/CityPicker";
+import { CitySwitcher } from "@/components/CitySwitcher";
 import { getFirebaseStorage, getDb } from "@/lib/firebase";
 
 function initialsOf(name?: string | null, email?: string | null): string {
@@ -24,7 +23,6 @@ function initialsOf(name?: string | null, email?: string | null): string {
 export default function EditProfilePage() {
   const router = useRouter();
   const { user, loading } = useAuth();
-  const { city, setCity } = useCity();
 
   const [name, setName] = useState("");
   const [bio, setBio] = useState("");
@@ -183,16 +181,10 @@ export default function EditProfilePage() {
         {/* city */}
         <section className="rounded-2xl bg-surface p-4 shadow-card">
           <h3 className="mb-1 font-display text-sm font-bold text-foreground">Your city</h3>
-          <p className="mb-2.5 text-xs text-muted">
-            Your feed shows issues within 65 km of this city.
+          <p className="mb-3 text-xs text-muted">
+            Your feed shows issues within 65 km of your city.
           </p>
-          {city && (
-            <p className="mb-2.5 flex items-center gap-1.5 text-sm font-semibold text-foreground">
-              <MapPin size={15} className="shrink-0 text-primary" strokeWidth={2.2} />
-              {city.cityName}
-            </p>
-          )}
-          <CityPicker onPick={setCity} initialName={city?.cityName} />
+          <CitySwitcher />
         </section>
 
         {error && (
