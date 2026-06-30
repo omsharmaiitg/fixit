@@ -35,10 +35,14 @@ export function IssueCard({
   issue,
   userLat,
   userLng,
+  canAct = true,
 }: {
   issue: Issue;
   userLat?: number | null;
   userLng?: number | null;
+  // When false (e.g. browsing another city, or no live GPS), the card is
+  // read-only: the upvote and "Can't find" controls are removed entirely.
+  canAct?: boolean;
 }) {
   const sevLabel = getSeverityLabel(issue.severity);
   const sevColor = SEVERITY_COLORS[sevLabel];
@@ -203,45 +207,58 @@ export function IssueCard({
             </span>
           </div>
 
-          {/* row 6 — actions (must not bubble to the card link) */}
-          <div className="mt-2 flex items-center gap-2 text-[11px] font-semibold">
-            <button
-              onClick={handleUpvote}
-              disabled={upBusy}
-              aria-pressed={upvoteActive}
-              aria-label={upvoteActive ? "Remove your upvote" : "Upvote this issue"}
-              className={`flex items-center gap-1 rounded-full px-2 py-1 transition active:scale-95 disabled:opacity-60 ${
-                upvoteActive ? "bg-primary/10 text-primary" : "bg-slate-100 text-muted"
-              }`}
-            >
-              <ArrowBigUp
-                size={14}
-                strokeWidth={2.4}
-                fill={upvoteActive ? "currentColor" : "none"}
-              />
-              {issue.upvoteCount}
-            </button>
+          {/* row 6 — actions (must not bubble to the card link). Removed when
+              the card is read-only; the discussion count (read-only signal)
+              still shows on its own when there's discussion to surface. */}
+          {canAct ? (
+            <div className="mt-2 flex items-center gap-2 text-[11px] font-semibold">
+              <button
+                onClick={handleUpvote}
+                disabled={upBusy}
+                aria-pressed={upvoteActive}
+                aria-label={upvoteActive ? "Remove your upvote" : "Upvote this issue"}
+                className={`flex items-center gap-1 rounded-full px-2 py-1 transition active:scale-95 disabled:opacity-60 ${
+                  upvoteActive ? "bg-primary/10 text-primary" : "bg-slate-100 text-muted"
+                }`}
+              >
+                <ArrowBigUp
+                  size={14}
+                  strokeWidth={2.4}
+                  fill={upvoteActive ? "currentColor" : "none"}
+                />
+                {issue.upvoteCount}
+              </button>
 
-            {issue.discussion.length > 0 && (
-              <span className="flex items-center gap-1 text-muted">
-                <MessageSquare size={12} strokeWidth={2.2} />
-                {issue.discussion.length}
-              </span>
-            )}
+              {issue.discussion.length > 0 && (
+                <span className="flex items-center gap-1 text-muted">
+                  <MessageSquare size={12} strokeWidth={2.2} />
+                  {issue.discussion.length}
+                </span>
+              )}
 
-            <button
-              onClick={handleCantFind}
-              disabled={cfBusy}
-              aria-pressed={cantFindActive}
-              aria-label="Report that you can't find this issue"
-              className={`ml-auto flex items-center gap-1 rounded-full px-2 py-1 transition active:scale-95 disabled:opacity-60 ${
-                cantFindActive ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-muted"
-              }`}
-            >
-              <SearchX size={12} strokeWidth={2.2} />
-              {cantFindActive ? "Can't find ✓" : "Can't find"}
-            </button>
-          </div>
+              <button
+                onClick={handleCantFind}
+                disabled={cfBusy}
+                aria-pressed={cantFindActive}
+                aria-label="Report that you can't find this issue"
+                className={`ml-auto flex items-center gap-1 rounded-full px-2 py-1 transition active:scale-95 disabled:opacity-60 ${
+                  cantFindActive ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-muted"
+                }`}
+              >
+                <SearchX size={12} strokeWidth={2.2} />
+                {cantFindActive ? "Can't find ✓" : "Can't find"}
+              </button>
+            </div>
+          ) : (
+            issue.discussion.length > 0 && (
+              <div className="mt-2 flex items-center gap-2 text-[11px] font-semibold">
+                <span className="flex items-center gap-1 text-muted">
+                  <MessageSquare size={12} strokeWidth={2.2} />
+                  {issue.discussion.length}
+                </span>
+              </div>
+            )
+          )}
         </div>
       </div>
 

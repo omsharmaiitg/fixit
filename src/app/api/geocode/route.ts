@@ -53,12 +53,16 @@ export async function GET(request: Request) {
       pick("administrative_area_level_1") ??
       null;
 
+    // State/region — used to build a confident "City, State" greeting label.
+    const region = pick("administrative_area_level_1");
+
     return NextResponse.json({
       locality,
       city,
+      region,
       address: result.formatted_address ?? null,
     });
   } catch {
-    return NextResponse.json({ locality: null, city: null, address: null });
+    return NextResponse.json({ locality: null, city: null, region: null, address: null });
   }
 }

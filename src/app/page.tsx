@@ -12,16 +12,16 @@ import {
   MapPin,
   BarChart3,
 } from "lucide-react";
-import { useLocation } from "@/hooks/useLocation";
 import { useIssues, sortIssues } from "@/hooks/useIssues";
-import { useCity } from "@/hooks/useCity";
 import { haversineDistance } from "@/lib/firebaseHelpers";
 import { FilterBar } from "@/components/FilterBar";
 import { CityPicker } from "@/components/CityPicker";
 import { IssueCard } from "@/components/IssueCard";
+import { ExploreBanner } from "@/components/ExploreBanner";
 import { SkeletonCard } from "@/components/SkeletonCard";
 import { FABButton } from "@/components/FABButton";
 import { useAuth } from "@/contexts/AuthContext";
+import { useLocationContext } from "@/contexts/LocationContext";
 import type { City } from "@/lib/city";
 import type { Issue } from "@/types";
 
@@ -67,10 +67,20 @@ function greetingForHour(h: number): string {
 
 export default function HomePage() {
   const { user } = useAuth();
-  const { city, resolved: cityResolved, setCity } = useCity();
+  // Single source of truth for where the user is and what city they're viewing.
+  const {
+    isExploring,
+    canAct,
+    activeCity,
+    homeCity,
+    locationSource,
+    gpsLat,
+    gpsLng,
+    needsCityPrompt,
+    pickHomeCity,
+  } = useLocationContext();
   const [tab, setTab] = useState<Tab>("active");
   const [distanceFilter, setDistanceFilter] = useState<number | null>(2000);
-  const { userLat, userLng, locationError, requestLocation } = useLocation();
   // Pull the full corpus; we apply the 65km anchor scope + distance-pill filter below.
   const { issues, loading, error, refresh } = useIssues(null, null, null);
 
@@ -89,49 +99,66 @@ export default function HomePage() {
   // First name only, when signed in — guests get the bare time greeting.
   const firstName = user?.displayName?.trim().split(/\s+/)[0] ?? null;
 
-  // Ask for location once on mount — live GPS is the PRIMARY feed anchor.
-  useEffect(() => {
-    requestLocation();
-  }, [requestLocation]);
+  // GPS is requested by LocationContext on app load — no need to ask here.
 
-  // Reverse-geocode the GPS locality for the greeting label (server route keeps
-  // the key server-side). Keyed on coarse coords so jitter doesn't refetch.
+  // Reverse-geocode the GPS position into a confident "Area, State" label for
+  // the greeting (server route keeps the key server-side). Keyed on coarse
+  // coords so jitter doesn't refetch; the result is cached in state and reused.
   const [ward, setWard] = useState<{ value: string | null; resolved: boolean }>({
     value: null,
     resolved: false,
   });
-  const latKey = userLat != null ? userLat.toFixed(3) : null;
-  const lngKey = userLng != null ? userLng.toFixed(3) : null;
+  const latKey = gpsLat != null ? gpsLat.toFixed(3) : null;
+  const lngKey = gpsLng != null ? gpsLng.toFixed(3) : null;
   useEffect(() => {
     if (!latKey || !lngKey) return;
     let alive = true;
     fetch(`/api/geocode?lat=${latKey}&lng=${lngKey}`)
       .then((r) => r.json())
-      .then((d) => alive && setWard({ value: d.locality ?? null, resolved: true }))
+      .then((d) => {
+        if (!alive) return;
+        // Prefer the most specific place name, then append the state when known.
+        const place = d.locality ?? d.city ?? null;
+        const label = place
+          ? d.region && d.region !== place
+            ? `${place}, ${d.region}`
+            : place
+          : null;
+        setWard({ value: label, resolved: true });
+      })
       .catch(() => alive && setWard({ value: null, resolved: true }));
     return () => {
       alive = false;
     };
   }, [latKey, lngKey]);
 
-  // Feed anchor: live GPS first, profile city as fallback. Both the 65km scope
-  // and the 1/2/5km pills measure from this single anchor.
-  const anchorLat = userLat ?? city?.cityLat ?? null;
-  const anchorLng = userLng ?? city?.cityLng ?? null;
+  // Home-city feed anchor: live GPS first, home-city center as fallback. Both
+  // the 65km scope and the 1/2/5km pills measure from this single anchor. (Only
+  // used when NOT exploring.)
+  const anchorLat = gpsLat ?? homeCity?.cityLat ?? null;
+  const anchorLng = gpsLng ?? homeCity?.cityLng ?? null;
 
-  // GPS is "resolved" once we have a fix or a definitive failure. We only fall
-  // through to the city picker when GPS won't anchor us AND there's no city.
-  const gpsResolved = userLat != null || locationError != null;
-  const needCity = cityResolved && gpsResolved && userLat == null && !city;
+  // When exploring another city, scope by cityName and sort from that city's
+  // center; distance-from-user is meaningless, so the 1/2/5km pills are hidden.
+  const exploreLat = activeCity?.cityLat ?? null;
+  const exploreLng = activeCity?.cityLng ?? null;
 
   const scoped = useMemo(() => {
+    if (isExploring) {
+      if (!activeCity) return [];
+      return issues.filter((i) => i.cityName === activeCity.cityName);
+    }
     if (anchorLat == null || anchorLng == null) return [];
     const within = (i: Issue, max: number) =>
       haversineDistance(anchorLat, anchorLng, i.location.lat, i.location.lng) <= max;
     let pool = issues.filter((i) => within(i, FEED_RADIUS_M));
     if (distanceFilter != null) pool = pool.filter((i) => within(i, distanceFilter));
     return pool;
-  }, [issues, anchorLat, anchorLng, distanceFilter]);
+  }, [issues, isExploring, activeCity, anchorLat, anchorLng, distanceFilter]);
+
+  // Anchor used for proximity tiebreaks in the sort + card distance labels.
+  const sortLat = isExploring ? exploreLat : anchorLat;
+  const sortLng = isExploring ? exploreLng : anchorLng;
 
   const sorted = useMemo(() => {
     if (tab === "resolved") {
@@ -142,29 +169,43 @@ export default function HomePage() {
     return sortIssues(
       scoped.filter((i) => i.status !== "resolved"),
       "pressure",
-      anchorLat,
-      anchorLng,
+      sortLat,
+      sortLng,
     );
-  }, [scoped, tab, anchorLat, anchorLng]);
+  }, [scoped, tab, sortLat, sortLng]);
 
-  // Greeting label tracks the active anchor: GPS locality when located, else
-  // the profile city name.
-  const locationLabel =
-    userLat != null
-      ? ward.resolved
-        ? ward.value ?? "Near you"
-        : "Pinpointing your area…"
-      : city?.cityName ?? "Choose your city";
-
-  // Skeletons while we resolve an anchor (GPS or city) or the corpus loads.
-  const showLoading = loading || anchorLat == null;
-
-  // GPS unavailable AND no profile city → ask for a city to anchor to.
-  if (needCity) {
-    return <CityOnboarding onPick={setCity} />;
+  // Greeting subtitle:
+  //  • Live GPS in the home city → the user's real resolved area ("Area, State"),
+  //    never left blank once GPS succeeded (falls back through home/active city).
+  //  • Exploring, or a fallback/guest-picked city → "Viewing {city}", not "Near you".
+  // Always resolves to a concrete name — never stale or empty.
+  const lastResortCity = activeCity?.cityName ?? homeCity?.cityName ?? null;
+  let locationLabel: string;
+  if (locationSource === "gps" && !isExploring) {
+    locationLabel = !ward.resolved
+      ? "Pinpointing your area…"
+      : ward.value ?? lastResortCity ?? "Your area";
+  } else if (lastResortCity) {
+    locationLabel = `Viewing ${lastResortCity}`;
+  } else {
+    locationLabel = "Choose your city";
   }
 
-  const kmLabel = distanceFilter ? `within ${distanceFilter / 1000} km` : "across your area";
+  // Skeletons while we resolve an anchor (GPS or city) or the corpus loads. When
+  // exploring we don't need the home anchor — just the corpus.
+  const showLoading = loading || (!isExploring && anchorLat == null);
+
+  // GPS unavailable AND no stored city → ask for a city to anchor to.
+  if (needsCityPrompt) {
+    return <CityOnboarding onPick={pickHomeCity} />;
+  }
+
+  // Count-line suffix: city name when exploring, distance band otherwise.
+  const scopeLabel = isExploring
+    ? `in ${activeCity?.cityName ?? "this city"}`
+    : distanceFilter
+      ? `within ${distanceFilter / 1000} km`
+      : "across your area";
 
   return (
     <div className="mx-auto w-full max-w-md px-4 pb-28">
@@ -241,15 +282,25 @@ export default function HomePage() {
         })}
       </div>
 
-      <FilterBar value={distanceFilter} onChange={setDistanceFilter} />
+      {/* Distance pills only make sense in the home city — hidden while exploring. */}
+      {!isExploring && (
+        <FilterBar value={distanceFilter} onChange={setDistanceFilter} />
+      )}
+
+      {/* While exploring another city, a slim banner + a way back to home. */}
+      {isExploring && (
+        <div className="mt-2">
+          <ExploreBanner />
+        </div>
+      )}
 
       {/* count summary */}
       {!showLoading && !error && (
         <p className="mb-3 mt-1 px-1 text-xs font-medium text-muted">
           <span className="font-bold text-foreground">{sorted.length}</span>{" "}
           {tab === "resolved"
-            ? `resolved ${kmLabel} · most recent first`
-            : `open ${sorted.length === 1 ? "issue" : "issues"} ${kmLabel} · sorted by pressure`}
+            ? `resolved ${scopeLabel} · most recent first`
+            : `open ${sorted.length === 1 ? "issue" : "issues"} ${scopeLabel} · sorted by pressure`}
         </p>
       )}
 
@@ -291,7 +342,7 @@ export default function HomePage() {
                 No fixes yet — be the first to drive one
               </h2>
               <p className="mt-1 text-sm text-muted">
-                When an issue {kmLabel} gets resolved and the community confirms
+                When an issue {scopeLabel} gets resolved and the community confirms
                 it, the win lands here.
               </p>
             </>
@@ -304,7 +355,7 @@ export default function HomePage() {
                 No issues here yet
               </h2>
               <p className="mt-1 text-sm text-muted">
-                Nothing reported {kmLabel}. Spotted a pothole, a dark streetlight,
+                Nothing reported {scopeLabel}. Spotted a pothole, a dark streetlight,
                 an overflowing drain? Be the first to put it on the map.
               </p>
             </>
@@ -326,19 +377,26 @@ export default function HomePage() {
                 ease: [0.16, 1, 0.3, 1],
               }}
             >
-              <IssueCard issue={issue} userLat={anchorLat} userLng={anchorLng} />
+              <IssueCard
+                issue={issue}
+                userLat={isExploring ? null : anchorLat}
+                userLng={isExploring ? null : anchorLng}
+                canAct={canAct}
+              />
             </motion.div>
           ))}
         </div>
       )}
 
-      <FABButton />
+      {/* Reporting is an action — only offered when the user can actually act
+          (live GPS, in their home city). Removed, not just disabled, otherwise. */}
+      {canAct && <FABButton />}
     </div>
   );
 }
 
 // First-run city selection. Shown until a city is chosen; the choice is then
-// persisted (cookie for guests, user doc when logged in) by useCity.setCity.
+// persisted (cookie for guests, user doc when logged in) by pickHomeCity.
 function CityOnboarding({ onPick }: { onPick: (city: City) => void }) {
   return (
     <div className="mx-auto flex min-h-[100dvh] w-full max-w-md flex-col justify-center px-6">
