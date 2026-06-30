@@ -25,8 +25,9 @@ import { useAuth } from "@/contexts/AuthContext";
 import type { City } from "@/lib/city";
 import type { Issue } from "@/types";
 
-// Hard cap: the feed never shows issues beyond this from the chosen city center.
-const CITY_RADIUS_M = 65_000;
+// The feed scope ("All" filter): issues within this radius of the active anchor
+// (live GPS, else the profile city center). Nothing beyond it ever shows.
+const FEED_RADIUS_M = 65_000;
 
 // Warm civic subtitles, one picked at random per app load.
 const SUBTITLES = [
@@ -69,8 +70,8 @@ export default function HomePage() {
   const { city, resolved: cityResolved, setCity } = useCity();
   const [tab, setTab] = useState<Tab>("active");
   const [distanceFilter, setDistanceFilter] = useState<number | null>(2000);
-  const { userLat, userLng, requestLocation } = useLocation();
-  // Pull the full corpus; we apply the 65km city cap + distance-pill filter below.
+  const { userLat, userLng, locationError, requestLocation } = useLocation();
+  // Pull the full corpus; we apply the 65km anchor scope + distance-pill filter below.
   const { issues, loading, error, refresh } = useIssues(null, null, null);
 
   // Greeting (time-of-day) + subtitle (random) are client-only — read in an
@@ -88,55 +89,82 @@ export default function HomePage() {
   // First name only, when signed in — guests get the bare time greeting.
   const firstName = user?.displayName?.trim().split(/\s+/)[0] ?? null;
 
-  // Ask for location once so the distance pills can use live GPS.
+  // Ask for location once on mount — live GPS is the PRIMARY feed anchor.
   useEffect(() => {
     requestLocation();
   }, [requestLocation]);
 
-  // 65km hard cap around the chosen city, then the distance-pill filter — pills
-  // measure from live GPS when available, else from the city center. "All"
-  // (distanceFilter null) = the full city radius.
-  const cityFiltered = useMemo(() => {
-    if (!city) return [];
-    let pool = issues.filter(
-      (i) =>
-        haversineDistance(city.cityLat, city.cityLng, i.location.lat, i.location.lng) <=
-        CITY_RADIUS_M,
-    );
-    if (distanceFilter != null) {
-      const cLat = userLat ?? city.cityLat;
-      const cLng = userLng ?? city.cityLng;
-      pool = pool.filter(
-        (i) =>
-          haversineDistance(cLat, cLng, i.location.lat, i.location.lng) <= distanceFilter,
-      );
-    }
+  // Reverse-geocode the GPS locality for the greeting label (server route keeps
+  // the key server-side). Keyed on coarse coords so jitter doesn't refetch.
+  const [ward, setWard] = useState<{ value: string | null; resolved: boolean }>({
+    value: null,
+    resolved: false,
+  });
+  const latKey = userLat != null ? userLat.toFixed(3) : null;
+  const lngKey = userLng != null ? userLng.toFixed(3) : null;
+  useEffect(() => {
+    if (!latKey || !lngKey) return;
+    let alive = true;
+    fetch(`/api/geocode?lat=${latKey}&lng=${lngKey}`)
+      .then((r) => r.json())
+      .then((d) => alive && setWard({ value: d.locality ?? null, resolved: true }))
+      .catch(() => alive && setWard({ value: null, resolved: true }));
+    return () => {
+      alive = false;
+    };
+  }, [latKey, lngKey]);
+
+  // Feed anchor: live GPS first, profile city as fallback. Both the 65km scope
+  // and the 1/2/5km pills measure from this single anchor.
+  const anchorLat = userLat ?? city?.cityLat ?? null;
+  const anchorLng = userLng ?? city?.cityLng ?? null;
+
+  // GPS is "resolved" once we have a fix or a definitive failure. We only fall
+  // through to the city picker when GPS won't anchor us AND there's no city.
+  const gpsResolved = userLat != null || locationError != null;
+  const needCity = cityResolved && gpsResolved && userLat == null && !city;
+
+  const scoped = useMemo(() => {
+    if (anchorLat == null || anchorLng == null) return [];
+    const within = (i: Issue, max: number) =>
+      haversineDistance(anchorLat, anchorLng, i.location.lat, i.location.lng) <= max;
+    let pool = issues.filter((i) => within(i, FEED_RADIUS_M));
+    if (distanceFilter != null) pool = pool.filter((i) => within(i, distanceFilter));
     return pool;
-  }, [issues, city, distanceFilter, userLat, userLng]);
+  }, [issues, anchorLat, anchorLng, distanceFilter]);
 
   const sorted = useMemo(() => {
     if (tab === "resolved") {
-      return cityFiltered
+      return scoped
         .filter((i) => i.status === "resolved")
         .sort((a, b) => resolvedTime(b) - resolvedTime(a));
     }
     return sortIssues(
-      cityFiltered.filter((i) => i.status !== "resolved"),
+      scoped.filter((i) => i.status !== "resolved"),
       "pressure",
-      userLat,
-      userLng,
+      anchorLat,
+      anchorLng,
     );
-  }, [cityFiltered, tab, userLat, userLng]);
+  }, [scoped, tab, anchorLat, anchorLng]);
 
-  // Treat "city still resolving" as loading so the feed doesn't flash empty.
-  const showLoading = loading || !cityResolved;
+  // Greeting label tracks the active anchor: GPS locality when located, else
+  // the profile city name.
+  const locationLabel =
+    userLat != null
+      ? ward.resolved
+        ? ward.value ?? "Near you"
+        : "Pinpointing your area…"
+      : city?.cityName ?? "Choose your city";
 
-  // First run / no city chosen → onboarding picker before the feed.
-  if (cityResolved && !city) {
+  // Skeletons while we resolve an anchor (GPS or city) or the corpus loads.
+  const showLoading = loading || anchorLat == null;
+
+  // GPS unavailable AND no profile city → ask for a city to anchor to.
+  if (needCity) {
     return <CityOnboarding onPick={setCity} />;
   }
 
-  const kmLabel = distanceFilter ? `within ${distanceFilter / 1000} km` : "everywhere";
+  const kmLabel = distanceFilter ? `within ${distanceFilter / 1000} km` : "across your area";
 
   return (
     <div className="mx-auto w-full max-w-md px-4 pb-28">
@@ -182,7 +210,7 @@ export default function HomePage() {
         )}
         <p className="mt-1.5 flex items-center gap-1.5 text-sm font-medium text-muted">
           <MapPin size={15} className="shrink-0 text-primary" strokeWidth={2.2} />
-          <span className="truncate">{city?.cityName ?? "Choose your city"}</span>
+          <span className="truncate">{locationLabel}</span>
         </p>
         {subtitle && (
           <p className="mt-3 text-sm leading-relaxed text-muted">{subtitle}</p>
@@ -298,7 +326,7 @@ export default function HomePage() {
                 ease: [0.16, 1, 0.3, 1],
               }}
             >
-              <IssueCard issue={issue} userLat={userLat} userLng={userLng} />
+              <IssueCard issue={issue} userLat={anchorLat} userLng={anchorLng} />
             </motion.div>
           ))}
         </div>

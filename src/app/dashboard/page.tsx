@@ -27,10 +27,17 @@ import {
   getProblemZones,
   getPredictedHotspots,
   getLatestReport,
+  haversineDistance,
   type WeeklyCivicReport,
 } from "@/lib/firebaseHelpers";
+import { useCity } from "@/hooks/useCity";
+import { CityPicker } from "@/components/CityPicker";
 import { CATEGORY_EMOJIS, CATEGORY_LABELS } from "@/lib/constants";
+import type { City } from "@/lib/city";
 import type { Issue, IssueCategory, ProblemZone, PredictedHotspot } from "@/types";
+
+// Match the home feed: everything is scoped to within this radius of the city center.
+const CITY_RADIUS_M = 65_000;
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
@@ -127,6 +134,7 @@ function useDashboardData() {
 
 export default function DashboardPage() {
   const { data, error, refresh } = useDashboardData();
+  const { city, resolved: cityResolved, setCity } = useCity();
 
   return (
     <div className="min-h-[100dvh] w-full bg-background">
@@ -134,8 +142,32 @@ export default function DashboardPage() {
         <TopBar />
 
         {error && <ErrorBlock message={error} onRetry={refresh} />}
-        {!error && !data && <LoadingState />}
-        {!error && data && <Dashboard data={data} />}
+        {!error && !cityResolved && <LoadingState />}
+        {!error && cityResolved && !city && <CityGate onPick={setCity} />}
+        {!error && cityResolved && city && !data && <LoadingState />}
+        {!error && cityResolved && city && data && <Dashboard data={data} city={city} />}
+      </div>
+    </div>
+  );
+}
+
+// Public dashboard with no city chosen yet → ask for one (same source the feed
+// uses; persists to the user doc when logged in, else the fixit_city cookie).
+function CityGate({ onPick }: { onPick: (city: City) => void }) {
+  return (
+    <div className="mx-auto mt-16 max-w-lg">
+      <p className="font-mono text-xs font-semibold uppercase tracking-[0.18em] text-primary">
+        FixIt · Impact
+      </p>
+      <h1 className="mt-2 font-display text-3xl font-extrabold leading-tight tracking-tight text-foreground">
+        Which city&apos;s record do you want to see?
+      </h1>
+      <p className="mt-3 text-sm leading-relaxed text-muted">
+        The Impact Dashboard is scoped to one city. Pick yours to see what was
+        reported there, and what got fixed.
+      </p>
+      <div className="mt-5">
+        <CityPicker onPick={onPick} />
       </div>
     </div>
   );
@@ -159,8 +191,28 @@ function TopBar() {
   );
 }
 
-function Dashboard({ data }: { data: DashboardData }) {
-  const { issues, zones, hotspots, report } = data;
+function Dashboard({ data, city }: { data: DashboardData; city: City }) {
+  // Scope every metric to within 65km of the chosen city center — same rule as
+  // the home feed, applied to issues, zones, and hotspots alike.
+  const inCity = (lat: number, lng: number) =>
+    haversineDistance(city.cityLat, city.cityLng, lat, lng) <= CITY_RADIUS_M;
+
+  const issues = useMemo(
+    () => data.issues.filter((i) => inCity(i.location.lat, i.location.lng)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [data.issues, city],
+  );
+  const zones = useMemo(
+    () => data.zones.filter((z) => inCity(z.centerLat, z.centerLng)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [data.zones, city],
+  );
+  const hotspots = useMemo(
+    () => data.hotspots.filter((h) => inCity(h.lat, h.lng)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [data.hotspots, city],
+  );
+  const report = data.report;
 
   const stats = useMemo(() => {
     const total = issues.length;
@@ -197,14 +249,14 @@ function Dashboard({ data }: { data: DashboardData }) {
       {/* title band */}
       <Reveal className="pt-8">
         <p className="font-mono text-xs font-semibold uppercase tracking-[0.18em] text-primary">
-          FixIt · Impact
+          FixIt · Impact · {city.cityName}
         </p>
         <h1 className="mt-2 max-w-3xl font-display text-4xl font-extrabold leading-[1.05] tracking-tight text-foreground md:text-6xl">
-          What the neighbourhood reported, and what got fixed.
+          What {city.cityName} reported, and what got fixed.
         </h1>
         <p className="mt-4 max-w-2xl text-base leading-relaxed text-muted">
-          Every report, verification and resolution is a public record. No login,
-          no edits, nothing hidden. This is the accountability layer.
+          Every report, verification and resolution in {city.cityName} is a public
+          record. No login, no edits, nothing hidden. This is the accountability layer.
         </p>
       </Reveal>
 
