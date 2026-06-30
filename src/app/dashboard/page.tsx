@@ -7,6 +7,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { motion, useReducedMotion } from "motion/react";
 import {
   ArrowLeft,
@@ -21,6 +22,7 @@ import {
   ScrollText,
   ShieldCheck,
   RotateCw,
+  LogIn,
 } from "lucide-react";
 import {
   getAllIssues,
@@ -30,8 +32,10 @@ import {
   haversineDistance,
   type WeeklyCivicReport,
 } from "@/lib/firebaseHelpers";
+import { useAuth } from "@/contexts/AuthContext";
 import { useLocationContext } from "@/contexts/LocationContext";
 import { CityPicker } from "@/components/CityPicker";
+import { CitySwitcher } from "@/components/CitySwitcher";
 import { CATEGORY_EMOJIS, CATEGORY_LABELS } from "@/lib/constants";
 import type { City } from "@/lib/city";
 import type { Issue, IssueCategory, ProblemZone, PredictedHotspot } from "@/types";
@@ -148,8 +152,43 @@ export default function DashboardPage() {
         {!error && needsCityPrompt && <CityGate onPick={pickHomeCity} />}
         {!error && !needsCityPrompt && !activeCity && <LoadingState />}
         {!error && activeCity && !data && <LoadingState />}
-        {!error && activeCity && data && <Dashboard data={data} city={activeCity} />}
+        {!error && activeCity && data && (
+          <>
+            <CityControls />
+            <Dashboard data={data} city={activeCity} />
+          </>
+        )}
       </div>
+    </div>
+  );
+}
+
+// Guests get a clear prompt to sign in before they can browse other cities;
+// signed-in users get the Phase 1 city-switch (current location vs explore),
+// and switching the active city re-scopes this whole dashboard.
+function CityControls() {
+  const { user } = useAuth();
+  const router = useRouter();
+
+  if (!user) {
+    return (
+      <div className="mt-6 flex flex-col gap-3 rounded-2xl border border-primary/20 bg-primary/5 p-5 sm:flex-row sm:items-center sm:justify-between">
+        <p className="text-sm font-medium text-foreground">
+          🔭 Want to see how other cities are doing? Sign in or register to explore.
+        </p>
+        <button
+          onClick={() => router.push("/auth")}
+          className="inline-flex shrink-0 items-center gap-1.5 self-start rounded-full bg-primary px-4 py-2 text-sm font-semibold text-white transition active:scale-95 sm:self-auto"
+        >
+          <LogIn size={15} strokeWidth={2.2} /> Sign in / Register
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-6 rounded-2xl bg-surface p-4 shadow-card">
+      <CitySwitcher />
     </div>
   );
 }

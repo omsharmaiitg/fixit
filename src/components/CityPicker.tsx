@@ -71,5 +71,12 @@ export function CityPicker({
     );
   }
 
-  return <div ref={hostRef} className="w-full" />;
+  // Solid black rounded border so the search field is clearly visible against
+  // the page; comfortable padding, otherwise consistent with app inputs.
+  return (
+    <div
+      ref={hostRef}
+      className="w-full rounded-xl border border-black bg-surface px-3.5 py-2.5 focus-within:border-primary"
+    />
+  );
 }

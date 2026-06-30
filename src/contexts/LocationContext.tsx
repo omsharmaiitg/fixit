@@ -24,6 +24,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -111,6 +112,21 @@ export function LocationProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     requestLocation();
   }, [requestLocation]);
+
+  // Explore is never inherited across auth identities. When the signed-in user
+  // changes — and crucially on logout — snap activeCity back to homeCity so the
+  // dashboard/feed immediately reflect the current-location city, never the
+  // previously-logged-in city. homeCity itself is re-resolved by the GPS/
+  // fallback effects below.
+  const prevUidRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (authLoading) return;
+    const uid = user?.uid ?? null;
+    if (prevUidRef.current !== uid) {
+      prevUidRef.current = uid;
+      setExploreCity(null);
+    }
+  }, [authLoading, user]);
 
   // (1) GPS path — reverse-geocode the fix into a city. GPS always wins, and we
   // persist it so it doubles as the profile fallback later. Keyed on coarse
