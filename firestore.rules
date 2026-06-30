@@ -25,18 +25,31 @@ service cloud.firestore {
              request.resource.data.dna.toSet()) == resource.data.dna.toSet();
     }
 
+    // Server-recompute path: the Watchtower agent and the admin "Recalculate"
+    // tool run the Firebase *client* SDK unauthenticated (no Admin credential),
+    // so they can't satisfy signedIn(). They only ever touch these derived
+    // fields, never community/identity data — allow exactly that set, nothing
+    // more. (See HARDENING NOTES: the real fix is moving them to the Admin SDK.)
+    function recomputeFieldsOnly() {
+      return request.resource.data.diff(resource.data).affectedKeys()
+        .hasOnly(['pressureScore', 'pressureBreakdown', 'agingStatus',
+                  'escalation', 'updatedAt']);
+    }
+
     match /issues/{issueId} {
       // Public read — transparency, the feed, and the login-free dashboard.
       allow read: if true;
 
-      // Create: open, so both anonymous (device id) and authenticated users can
-      // report. Tighten to `signedIn()` once login is mandatory.
-      allow create: if true;
+      // Create: reporting now requires an account (anonymous device-id writes
+      // are gone). Field-level ownership isn't enforced here — any signed-in
+      // user may create — which is fine for the hackathon scope.
+      allow create: if signedIn();
 
-      // Update: open for community actions (upvote / verify / discussion /
-      // adopt / device→uid backfill) AND admin/Watchtower recompute, but DNA
-      // history is immutable and the doc can never be deleted.
-      allow update: if dnaAppendOnly();
+      // Update: community actions (upvote / can't-find / verify / discussion /
+      // adopt / device→uid backfill) require login; the unauthenticated server
+      // recompute path is allowed only when it touches the derived field set.
+      // DNA history stays immutable in both cases; the doc can never be deleted.
+      allow update: if dnaAppendOnly() && (signedIn() || recomputeFieldsOnly());
 
       allow delete: if false; // issues are a permanent public record
     }

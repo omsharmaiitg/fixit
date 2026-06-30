@@ -39,6 +39,13 @@ function currentUid(): string | null {
 }
 
 // The identity to stamp on / query reports by: uid if signed in, else device id.
+//
+// WRITE PATHS MUST NOT RELY ON THE DEVICE-ID FALLBACK. Reporting and upvoting
+// now require login (see useRequireAuth + the Firestore rules), so any caller
+// performing a write must gate on useAuth().user first — by the time it calls
+// this, a uid exists. The device-id fallback only survives for read-only
+// display/identity (e.g. My Reports lookup, feed distance), where being signed
+// out is acceptable.
 export function getReporterId(): string {
   return currentUid() ?? getDeviceId();
 }

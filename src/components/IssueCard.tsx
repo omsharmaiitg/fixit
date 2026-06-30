@@ -21,8 +21,10 @@ import {
   upvoteIssue,
   cantFindIssue,
 } from "@/lib/firebaseHelpers";
-import { getPressureColor } from "@/lib/pressureScore";
+import { getPressureColor, BASELINE_WEIGHT } from "@/lib/pressureScore";
+import { resolveUpvoteWeight } from "@/lib/upvoteLocation";
 import { getReporterId } from "@/lib/reporter";
+import { useRequireAuth, LoginPrompt } from "@/components/LoginPrompt";
 
 function formatDistance(m: number): string {
   return m < 1000 ? `${Math.round(m)} m` : `${(m / 1000).toFixed(1)} km`;
@@ -68,33 +70,51 @@ export function IssueCard({
   const cantFindActive = reporterId !== "" && (issue.cantFindBy ?? []).includes(reporterId);
   const [upBusy, setUpBusy] = useState(false);
   const [cfBusy, setCfBusy] = useState(false);
+  const { promptOpen, closePrompt, requireAuth } = useRequireAuth();
 
   // The card is a <Link>; action buttons must not bubble into navigation.
-  async function handleUpvote(e: React.MouseEvent) {
+  // Both upvote and "can't find" are community signals that now require login
+  // (can't-find gated too, for consistency — it nudges status just like upvote).
+  function handleUpvote(e: React.MouseEvent) {
     e.preventDefault();
     e.stopPropagation();
-    if (!reporterId || upBusy) return;
-    setUpBusy(true);
-    try {
-      await upvoteIssue(issue.id, reporterId);
-    } finally {
-      setUpBusy(false);
-    }
+    requireAuth(async () => {
+      if (!reporterId || upBusy) return;
+      setUpBusy(true);
+      try {
+        // Reuse the feed's location if we have it (no extra prompt); resolve the
+        // proximity weight only when casting (un-upvote ignores it).
+        const weight = upvoteActive
+          ? BASELINE_WEIGHT
+          : await resolveUpvoteWeight(
+              issue.location.lat,
+              issue.location.lng,
+              userLat,
+              userLng,
+            );
+        await upvoteIssue(issue.id, reporterId, weight);
+      } finally {
+        setUpBusy(false);
+      }
+    });
   }
 
-  async function handleCantFind(e: React.MouseEvent) {
+  function handleCantFind(e: React.MouseEvent) {
     e.preventDefault();
     e.stopPropagation();
-    if (!reporterId || cfBusy) return;
-    setCfBusy(true);
-    try {
-      await cantFindIssue(issue.id, reporterId);
-    } finally {
-      setCfBusy(false);
-    }
+    requireAuth(async () => {
+      if (!reporterId || cfBusy) return;
+      setCfBusy(true);
+      try {
+        await cantFindIssue(issue.id, reporterId);
+      } finally {
+        setCfBusy(false);
+      }
+    });
   }
 
   return (
+    <>
     <Link
       href={`/issue/${issue.id}`}
       className="group relative block overflow-hidden rounded-2xl bg-surface shadow-card transition active:scale-[0.99]"
@@ -234,5 +254,7 @@ export function IssueCard({
         />
       </div>
     </Link>
+    <LoginPrompt open={promptOpen} onClose={closePrompt} />
+    </>
   );
 }

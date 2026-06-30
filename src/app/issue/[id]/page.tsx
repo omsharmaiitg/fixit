@@ -11,7 +11,8 @@ import {
   upvoteIssue,
   cantFindIssue,
 } from "@/lib/firebaseHelpers";
-import { calculatePressureScore } from "@/lib/pressureScore";
+import { calculatePressureScore, BASELINE_WEIGHT } from "@/lib/pressureScore";
+import { resolveUpvoteWeight } from "@/lib/upvoteLocation";
 import { getReporterId } from "@/lib/reporter";
 import {
   CATEGORY_EMOJIS,
@@ -24,6 +25,8 @@ import {
 } from "@/lib/constants";
 import { PressureScore } from "@/components/PressureScore";
 import { IssueDNA } from "@/components/IssueDNA";
+import { useRequireAuth, LoginPrompt } from "@/components/LoginPrompt";
+import { useAuth } from "@/contexts/AuthContext";
 import type { Issue, IssueStatus } from "@/types";
 
 const STEP_ORDER: IssueStatus[] = [
@@ -35,14 +38,21 @@ const STEP_ORDER: IssueStatus[] = [
 ];
 
 // Toggle this reporter's upvote on a local copy of the issue, keeping
-// upvoteCount === upvotedBy.length and recomputing pressure. Its own inverse,
-// so calling it again reverts an optimistic update.
-function toggleUpvoteLocal(issue: Issue, reporterId: string): Issue {
+// upvoteCount === upvotedBy.length, freezing the proximity weight on cast, and
+// recomputing pressure. Its own inverse (same weight), so calling it again
+// reverts an optimistic update.
+function toggleUpvoteLocal(issue: Issue, reporterId: string, weight: number): Issue {
   const upvotedBy = [...(issue.upvotedBy ?? [])];
+  const weights = { ...(issue.upvoteWeights ?? {}) };
   const i = upvotedBy.indexOf(reporterId);
-  if (i >= 0) upvotedBy.splice(i, 1);
-  else upvotedBy.push(reporterId);
-  const next = { ...issue, upvotedBy, upvoteCount: upvotedBy.length };
+  if (i >= 0) {
+    upvotedBy.splice(i, 1);
+    delete weights[reporterId];
+  } else {
+    upvotedBy.push(reporterId);
+    weights[reporterId] = weight;
+  }
+  const next = { ...issue, upvotedBy, upvoteCount: upvotedBy.length, upvoteWeights: weights };
   const { score, breakdown } = calculatePressureScore(next);
   next.pressureScore = score;
   next.pressureBreakdown = breakdown;
@@ -97,12 +107,14 @@ function StatusTimeline({ status }: { status: IssueStatus }) {
 export default function IssueDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
+  const { user } = useAuth();
   const [issue, setIssue] = useState<Issue | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [reporterId, setReporterId] = useState("");
   const [upBusy, setUpBusy] = useState(false);
   const [cfBusy, setCfBusy] = useState(false);
+  const { promptOpen, closePrompt, requireAuth } = useRequireAuth();
 
   useEffect(() => {
     // Reporter id isn't available during SSR; resolve it after mount.
@@ -116,30 +128,40 @@ export default function IssueDetailPage() {
     reporterId !== "" && !!issue && (issue.cantFindBy ?? []).includes(reporterId);
 
   // Toggle: optimistic local update (its own inverse on error), then persist.
-  async function handleUpvote() {
-    if (!reporterId || upBusy) return;
-    setUpBusy(true);
-    setIssue((prev) => prev && toggleUpvoteLocal(prev, reporterId));
-    try {
-      await upvoteIssue(id, reporterId);
-    } catch {
-      setIssue((prev) => prev && toggleUpvoteLocal(prev, reporterId));
-    } finally {
-      setUpBusy(false);
-    }
+  // Both actions require login (gate runs before the optimistic update).
+  function handleUpvote() {
+    requireAuth(async () => {
+      if (!reporterId || upBusy || !issue) return;
+      setUpBusy(true);
+      // No known location on this page — prompt once at tap, unless un-voting.
+      const removing = (issue.upvotedBy ?? []).includes(reporterId);
+      const weight = removing
+        ? BASELINE_WEIGHT
+        : await resolveUpvoteWeight(issue.location.lat, issue.location.lng);
+      setIssue((prev) => prev && toggleUpvoteLocal(prev, reporterId, weight));
+      try {
+        await upvoteIssue(id, reporterId, weight);
+      } catch {
+        setIssue((prev) => prev && toggleUpvoteLocal(prev, reporterId, weight));
+      } finally {
+        setUpBusy(false);
+      }
+    });
   }
 
-  async function handleCantFind() {
-    if (!reporterId || cfBusy) return;
-    setCfBusy(true);
-    setIssue((prev) => prev && toggleCantFindLocal(prev, reporterId));
-    try {
-      await cantFindIssue(id, reporterId);
-    } catch {
+  function handleCantFind() {
+    requireAuth(async () => {
+      if (!reporterId || cfBusy) return;
+      setCfBusy(true);
       setIssue((prev) => prev && toggleCantFindLocal(prev, reporterId));
-    } finally {
-      setCfBusy(false);
-    }
+      try {
+        await cantFindIssue(id, reporterId);
+      } catch {
+        setIssue((prev) => prev && toggleCantFindLocal(prev, reporterId));
+      } finally {
+        setCfBusy(false);
+      }
+    });
   }
 
   useEffect(() => {
@@ -161,6 +183,18 @@ export default function IssueDetailPage() {
       alive = false;
     };
   }, [id]);
+
+  // Anonymity is display-only: hide the real name from everyone EXCEPT the
+  // reporter viewing their own report (uid matches the stored reporterId).
+  // Legacy docs without isAnonymous read as not-anonymous.
+  const showAnonymous =
+    !!issue && issue.isAnonymous === true && user?.uid !== issue.reporterId;
+  const reporterDisplayName = showAnonymous ? "Anonymous" : issue?.reporterName;
+  // Same rule for the reporter-authored "reported" DNA node's actor.
+  const dnaForView =
+    issue && showAnonymous
+      ? issue.dna.map((d) => (d.type === "reported" ? { ...d, actor: "Anonymous" } : d))
+      : (issue?.dna ?? []);
 
   return (
     <div className="mx-auto w-full max-w-md pb-16">
@@ -267,7 +301,7 @@ export default function IssueDetailPage() {
               <span>
                 Reported by{" "}
                 <span className="font-semibold text-foreground">
-                  {issue.reporterName}
+                  {reporterDisplayName}
                 </span>
               </span>
               <span>·</span>
@@ -362,10 +396,12 @@ export default function IssueDetailPage() {
             <p className="mb-3 text-xs text-muted">
               An immutable, timestamped biography. Nothing here can be edited.
             </p>
-            <IssueDNA dna={issue.dna} reportedAt={issue.reportedAt} />
+            <IssueDNA dna={dnaForView} reportedAt={issue.reportedAt} />
           </div>
         </div>
       )}
+
+      <LoginPrompt open={promptOpen} onClose={closePrompt} />
     </div>
   );
 }

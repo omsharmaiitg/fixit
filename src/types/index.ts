@@ -120,12 +120,23 @@ export interface Issue {
   reporterName: string;
   coReporters: string[];
 
+  // Display-only anonymity: reporterId/reporterName still hold the REAL reporter
+  // (so My Reports + moderation work) — this flag only hides the name from other
+  // viewers. Missing on legacy docs ⇒ treat as false. (Part 2)
+  isAnonymous: boolean;
+  // Weighted-upvote sum needed to auto-verify this report. Set at creation:
+  // named reports need fewer than anonymous ones. Missing ⇒ named default. (Part 3)
+  requiredUpvotesForVerification: number;
+
   reportedAt: Date;
   updatedAt: Date;
 
-  upvoteCount: number; // kept in sync with upvotedBy.length
-  upvotedBy: string[]; // reporter ids (device id or auth uid) who upvoted — toggle source of truth
-  nearbyUpvoteCount: number; // upvotes from within ≤50m, weighted 1.5× in pressure
+  upvoteCount: number; // headcount of voters — kept in sync with upvotedBy.length (citizen-facing)
+  upvotedBy: string[]; // reporter ids (auth uid) who upvoted — toggle source of truth
+  // Per-voter proximity weight at the time of voting (uid → weight). Frozen on
+  // cast so a later move doesn't retroactively change it. Its SUM feeds the
+  // pressure score's verification term + the verification threshold. (Part 3)
+  upvoteWeights: Record<string, number>;
   cantFindCount: number; // kept in sync with cantFindBy.length
   cantFindBy?: string[]; // reporter ids who flagged "can't find"
 

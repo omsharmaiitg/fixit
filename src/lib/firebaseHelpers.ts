@@ -17,9 +17,14 @@ import {
   type DocumentData,
 } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
-import { calculatePressureScore } from "@/lib/pressureScore";
+import {
+  calculatePressureScore,
+  weightedUpvoteSum,
+  getAgingStatus,
+  BASELINE_WEIGHT,
+  VERIFICATION_THRESHOLD_NAMED,
+} from "@/lib/pressureScore";
 import { getDb, getFirebaseStorage } from "@/lib/firebase";
-import { getAgingStatus } from "@/lib/pressureScore";
 import type {
   Badge,
   DiscussionEntry,
@@ -158,10 +163,17 @@ export async function updateIssueStatus(
 }
 
 // Toggle this reporter's upvote. Adds the id if absent (upvote), removes it if
-// present (un-upvote), keeps upvoteCount === upvotedBy.length, and recomputes the
-// pressure score. Runs in a transaction so concurrent votes don't clobber each
-// other. Never touches `dna`, so the append-only Firestore rule passes.
-export async function upvoteIssue(issueId: string, reporterId: string): Promise<void> {
+// present (un-upvote), keeps upvoteCount === upvotedBy.length (a true headcount),
+// and freezes the voter's proximity `weight` in upvoteWeights on cast (Part 3b).
+// The WEIGHTED sum — not the headcount — drives the pressure score and the
+// reported→verified transition (Part 3d). Runs in a transaction so concurrent
+// votes don't clobber each other. `weight` defaults to baseline (location
+// unknown / un-upvote, where it's ignored).
+export async function upvoteIssue(
+  issueId: string,
+  reporterId: string,
+  weight: number = BASELINE_WEIGHT,
+): Promise<void> {
   if (!reporterId) return;
   const db = getDb();
   const ref = doc(db, "issues", issueId);
@@ -170,22 +182,45 @@ export async function upvoteIssue(issueId: string, reporterId: string): Promise<
     if (!snap.exists()) return;
     const issue = issueFromSnapshot(snap.id, snap.data());
     const upvotedBy = [...(issue.upvotedBy ?? [])];
+    const weights = { ...(issue.upvoteWeights ?? {}) };
     const i = upvotedBy.indexOf(reporterId);
-    if (i >= 0) upvotedBy.splice(i, 1);
-    else upvotedBy.push(reporterId);
+    const adding = i < 0;
+    if (adding) {
+      upvotedBy.push(reporterId);
+      weights[reporterId] = weight;
+    } else {
+      upvotedBy.splice(i, 1);
+      delete weights[reporterId];
+    }
 
-    const { score, breakdown } = calculatePressureScore({
-      ...issue,
+    const next = { ...issue, upvotedBy, upvoteCount: upvotedBy.length, upvoteWeights: weights };
+    const { score, breakdown } = calculatePressureScore(next);
+    const update: Record<string, unknown> = {
       upvotedBy,
       upvoteCount: upvotedBy.length,
-    });
-    tx.update(ref, {
-      upvotedBy,
-      upvoteCount: upvotedBy.length,
+      upvoteWeights: weights,
       pressureScore: score,
       pressureBreakdown: breakdown,
       updatedAt: new Date(),
-    });
+    };
+
+    // Community verification: when the weighted sum first crosses this report's
+    // threshold, promote reported → verified and append a DNA milestone.
+    // Append-only (arrayUnion) keeps the Firestore integrity rule satisfied.
+    const threshold = issue.requiredUpvotesForVerification ?? VERIFICATION_THRESHOLD_NAMED;
+    if (adding && issue.status === "reported" && weightedUpvoteSum(next) >= threshold) {
+      update.status = "verified";
+      update.dna = arrayUnion({
+        id: crypto.randomUUID(),
+        type: "verified",
+        emoji: "✅",
+        label: "Verified by community upvotes",
+        timestamp: new Date(),
+        actor: "community",
+      } satisfies DNAEntry);
+    }
+
+    tx.update(ref, update);
   });
 }
 

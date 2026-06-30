@@ -5,7 +5,11 @@ import {
   writeBatch,
 } from "firebase/firestore";
 import { getDb } from "@/lib/firebase";
-import { calculatePressureScore, getAgingStatus } from "@/lib/pressureScore";
+import {
+  calculatePressureScore,
+  getAgingStatus,
+  VERIFICATION_THRESHOLD_NAMED,
+} from "@/lib/pressureScore";
 import { stripUndefined } from "@/lib/firebaseHelpers";
 import type {
   DNAEntry,
@@ -103,6 +107,7 @@ const SEEDS: Seed[] = [
 function buildIssue(s: Seed, zoneId: string): Issue {
   const reportedAt = new Date(now - s.daysAgo * DAY);
   const weatherAtReport = s.rain ? RAIN : undefined;
+  const upvoterIds = Array.from({ length: s.upvotes }, () => crypto.randomUUID());
   const base: Issue = {
     id: crypto.randomUUID(),
     title: s.title,
@@ -117,13 +122,20 @@ function buildIssue(s: Seed, zoneId: string): Issue {
     reporterId: `seed-${s.reporter.replace(/\W/g, "").toLowerCase()}`,
     reporterName: s.reporter,
     coReporters: [],
+    isAnonymous: false,
+    requiredUpvotesForVerification: VERIFICATION_THRESHOLD_NAMED,
     reportedAt,
     updatedAt: new Date(now),
     upvoteCount: s.upvotes,
-    nearbyUpvoteCount: s.nearbyUpvotes,
     // Synthetic voters so seeded counts stay consistent with the upvotedBy model
     // (upvoteCount === upvotedBy.length). Real votes add/remove the device id.
-    upvotedBy: Array.from({ length: s.upvotes }, () => crypto.randomUUID()),
+    upvotedBy: upvoterIds,
+    // Proximity weights (Part 3): the first `nearbyUpvotes` voters sit close
+    // (1.5×), the rest at baseline (1.0×) — so the weighted sum reproduces the
+    // old `upvotes + 0.5*nearby` effective count and seeded pressure holds.
+    upvoteWeights: Object.fromEntries(
+      upvoterIds.map((uid, i) => [uid, i < s.nearbyUpvotes ? 1.5 : 1.0]),
+    ),
     cantFindCount: 0,
     cantFindBy: [],
     pressureScore: 0,

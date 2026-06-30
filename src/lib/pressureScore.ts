@@ -2,6 +2,40 @@ import type { AgingStatus, Issue, PressureBreakdown } from "@/types";
 
 const clamp = (n: number, lo: number, hi: number) => Math.min(Math.max(n, lo), hi);
 
+// Weighted upvotes needed to auto-verify (reported → verified). Anonymous
+// reports demand more community corroboration than named ones. Tune here. (Part 3d)
+export const VERIFICATION_THRESHOLD_NAMED = 3;
+export const VERIFICATION_THRESHOLD_ANONYMOUS = 5;
+
+// ─── Distance-weighted upvotes (Part 3a) ─────────────────────────────────────
+// A vote's contribution scales linearly with how close the voter is, with a
+// floor so distance never makes a vote count for LESS than a normal vote — it
+// only adds a proximity bonus that fades to nothing by DECAY_DISTANCE_KM.
+// These are the single knobs to tune the whole system.
+export const MAX_PROXIMITY_WEIGHT = 2.0; // weight at distance 0
+export const BASELINE_WEIGHT = 1.0; // floor; also the weight when location is unknown
+export const DECAY_DISTANCE_KM = 10; // distance at which weight reaches BASELINE_WEIGHT
+
+// weight(d): 2.0 at 0km → linear decay → 1.0 at/after 10km.
+export function upvoteWeight(distanceKm: number): number {
+  if (distanceKm <= 0) return MAX_PROXIMITY_WEIGHT;
+  if (distanceKm >= DECAY_DISTANCE_KM) return BASELINE_WEIGHT;
+  return (
+    MAX_PROXIMITY_WEIGHT -
+    (MAX_PROXIMITY_WEIGHT - BASELINE_WEIGHT) * (distanceKm / DECAY_DISTANCE_KM)
+  );
+}
+
+// Sum of every voter's frozen proximity weight. Legacy docs (no upvoteWeights)
+// fall back to counting each existing voter at BASELINE_WEIGHT so their pressure
+// doesn't collapse to zero. This SUM — not the headcount — drives verification.
+export function weightedUpvoteSum(issue: Issue): number {
+  const weights = issue.upvoteWeights ?? {};
+  const keys = Object.keys(weights);
+  if (keys.length > 0) return keys.reduce((sum, k) => sum + weights[k], 0);
+  return (issue.upvoteCount ?? 0) * BASELINE_WEIGHT;
+}
+
 export function daysSince(date: Date): number {
   return (Date.now() - date.getTime()) / 86_400_000;
 }
@@ -23,9 +57,9 @@ export function calculatePressureScore(issue: Issue): {
   score: number;
   breakdown: PressureBreakdown;
 } {
-  // Nearby (≤50m) upvotes count 1.5× — i.e. an extra 0.5× on top of the base.
-  const effectiveUpvotes = issue.upvoteCount + 0.5 * (issue.nearbyUpvoteCount ?? 0);
-  const verification = Math.min(effectiveUpvotes * 2, 30);
+  // Distance-weighted verification (Part 3b): the SUM of per-voter proximity
+  // weights replaces the old count + 50m/1.5× special case.
+  const verification = Math.min(weightedUpvoteSum(issue) * 2, 30);
 
   const age = Math.min(daysSince(issue.reportedAt) * 1.5, 25);
 

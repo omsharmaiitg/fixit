@@ -18,9 +18,14 @@ import {
   uploadIssuePhoto,
   getSeverityLabel,
 } from "@/lib/firebaseHelpers";
-import { calculatePressureScore } from "@/lib/pressureScore";
+import {
+  calculatePressureScore,
+  VERIFICATION_THRESHOLD_NAMED,
+  VERIFICATION_THRESHOLD_ANONYMOUS,
+} from "@/lib/pressureScore";
 import { base64ToBlob } from "@/lib/imageUtils";
 import { getReporterId } from "@/lib/reporter";
+import { useAuth } from "@/contexts/AuthContext";
 import {
   CATEGORY_LABELS,
   CATEGORY_EMOJIS,
@@ -84,6 +89,7 @@ function timeOfDayNow(): TimeOfDay {
 
 export default function ReportPage() {
   const router = useRouter();
+  const { user } = useAuth();
   const [stage, setStage] = useState<Stage>("chat");
   const [draft, setDraft] = useState<ReportDraft | null>(null);
   const [photo, setPhoto] = useState<CapturedImage | null>(null);
@@ -109,7 +115,7 @@ export default function ReportPage() {
     setStage("review");
   }
 
-  async function handleSubmit(title: string) {
+  async function handleSubmit(title: string, isAnonymous: boolean) {
     if (!draft || !location) return;
     setSubmitting(true);
     setError(null);
@@ -126,6 +132,12 @@ export default function ReportPage() {
       const category = normalizeCategory(draft.category);
       const severity = Math.max(1, Math.min(10, Math.round(draft.severity)));
 
+      // Reporting requires login (FAB gate), so a user exists here. Stamp the
+      // REAL identity even when anonymous — anonymity only hides the name at
+      // render time (see issue detail page), it never blanks what's stored.
+      const reporterId = user?.uid ?? getReporterId();
+      const reporterName = user?.displayName?.trim() || user?.email || "You";
+
       const issue: Issue = {
         id,
         title: title.trim() || draft.title,
@@ -137,14 +149,18 @@ export default function ReportPage() {
         agingStatus: "fresh",
         location: { lat: location.lat, lng: location.lng, address: location.address },
         photoUrls,
-        reporterId: getReporterId(),
-        reporterName: "You",
+        reporterId,
+        reporterName,
         coReporters: [],
+        isAnonymous,
+        requiredUpvotesForVerification: isAnonymous
+          ? VERIFICATION_THRESHOLD_ANONYMOUS
+          : VERIFICATION_THRESHOLD_NAMED,
         reportedAt,
         updatedAt: reportedAt,
         upvoteCount: 0,
         upvotedBy: [],
-        nearbyUpvoteCount: 0,
+        upvoteWeights: {},
         cantFindCount: 0,
         cantFindBy: [],
         pressureScore: 0,
@@ -156,7 +172,7 @@ export default function ReportPage() {
             emoji: "📝",
             label: "Issue reported",
             timestamp: reportedAt,
-            actor: "You",
+            actor: reporterName,
             ...(photoUrls[0] ? { photoUrl: photoUrls[0] } : {}),
           },
         ],
@@ -298,10 +314,11 @@ function ReviewStage({
   location: ConfirmedLocation;
   submitting: boolean;
   error: string | null;
-  onSubmit: (title: string) => void;
+  onSubmit: (title: string, isAnonymous: boolean) => void;
 }) {
   const [title, setTitle] = useState(draft.title);
   const [showBreakdown, setShowBreakdown] = useState(false);
+  const [isAnonymous, setIsAnonymous] = useState(false);
   const category = normalizeCategory(draft.category);
   const severity = Math.max(1, Math.min(10, Math.round(draft.severity)));
   const sevLabel = getSeverityLabel(severity);
@@ -412,6 +429,22 @@ function ReviewStage({
           </div>
         </div>
 
+        {/* anonymity toggle — display-only; the real reporter is still stored */}
+        <label className="flex cursor-pointer items-start gap-3 rounded-xl bg-slate-50 p-3">
+          <input
+            type="checkbox"
+            checked={isAnonymous}
+            onChange={(e) => setIsAnonymous(e.target.checked)}
+            className="mt-0.5 h-4 w-4 shrink-0 accent-primary"
+          />
+          <span className="text-sm">
+            <span className="font-semibold text-foreground">Report anonymously</span>
+            <span className="mt-0.5 block text-xs text-muted">
+              Your name won&apos;t be shown publicly on this report.
+            </span>
+          </span>
+        </label>
+
         {error && (
           <p className="rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>
         )}
@@ -419,7 +452,7 @@ function ReviewStage({
 
       {/* submit */}
       <button
-        onClick={() => onSubmit(title)}
+        onClick={() => onSubmit(title, isAnonymous)}
         disabled={submitting}
         className="sticky bottom-4 mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3.5 font-display font-bold text-white shadow-card-lg transition active:scale-[0.98] disabled:opacity-60"
       >
