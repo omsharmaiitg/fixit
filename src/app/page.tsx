@@ -11,6 +11,7 @@ import {
   Sparkles,
   Trophy,
   MapPin,
+  BarChart3,
 } from "lucide-react";
 import { useLocation } from "@/hooks/useLocation";
 import { useIssues, sortIssues } from "@/hooks/useIssues";
@@ -127,6 +128,13 @@ export default function HomePage() {
           FixIt
         </h1>
         <div className="flex items-center gap-2">
+          <Link
+            href="/dashboard"
+            aria-label="Impact dashboard"
+            className="flex h-9 w-9 items-center justify-center rounded-full bg-surface text-muted shadow-card transition active:scale-95"
+          >
+            <BarChart3 size={18} strokeWidth={2} />
+          </Link>
           <button
             aria-label="Notifications"
             className="flex h-9 w-9 items-center justify-center rounded-full bg-surface text-muted shadow-card transition active:scale-95"

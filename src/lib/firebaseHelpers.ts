@@ -32,6 +32,8 @@ import type {
   Issue,
   IssueSeverity,
   IssueStatus,
+  PredictedHotspot,
+  ProblemZone,
   User,
 } from "@/types";
 
@@ -113,6 +115,54 @@ export function subscribeToIssues(
 export async function getIssueById(id: string): Promise<Issue | null> {
   const snap = await getDoc(doc(getDb(), "issues", id));
   return snap.exists() ? issueFromSnapshot(snap.id, snap.data()) : null;
+}
+
+// One-shot fetch of the whole corpus (public read). Used by the Impact
+// Dashboard, which wants a snapshot, not a live subscription.
+export async function getAllIssues(): Promise<Issue[]> {
+  const snap = await getDocs(collection(getDb(), "issues"));
+  return snap.docs.map((d) => issueFromSnapshot(d.id, d.data()));
+}
+
+// ─── Server-written intelligence collections (read-only here) ─────────────────
+// These are produced by the Watchtower agent; the dashboard just reads them.
+// tsToDate keeps the Timestamp→Date boundary in this one module (CLAUDE.md §8.4).
+
+export async function getProblemZones(): Promise<ProblemZone[]> {
+  const snap = await getDocs(collection(getDb(), "problemZones"));
+  return snap.docs
+    .map((d) => tsToDate({ ...d.data(), id: d.id }) as ProblemZone)
+    .sort((a, b) => b.combinedPressure - a.combinedPressure);
+}
+
+export async function getPredictedHotspots(): Promise<PredictedHotspot[]> {
+  const snap = await getDocs(collection(getDb(), "hotspots"));
+  return snap.docs.map((d) => tsToDate({ ...d.data(), id: d.id }) as PredictedHotspot);
+}
+
+// The Watchtower's weekly civic report (one doc per ISO date). The dashboard
+// shows only the newest. Shape mirrors watchtowerAgent's WeeklyReport + meta.
+export interface WeeklyCivicReport {
+  id: string;
+  glance: string;
+  highlight: string;
+  theShame: string;
+  topContributor: string;
+  nextWeekWatch: string;
+  verdict: string;
+  generatedAt: Date;
+}
+
+export async function getLatestReport(): Promise<WeeklyCivicReport | null> {
+  const snap = await getDocs(collection(getDb(), "reports"));
+  if (snap.empty) return null;
+  const reports = snap.docs.map(
+    (d) => tsToDate({ ...d.data(), id: d.id }) as WeeklyCivicReport,
+  );
+  reports.sort(
+    (a, b) => (b.generatedAt?.getTime() ?? 0) - (a.generatedAt?.getTime() ?? 0),
+  );
+  return reports[0];
 }
 
 // All issues reported from a given identity (anonymous device id or, later,
