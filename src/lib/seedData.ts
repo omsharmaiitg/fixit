@@ -284,6 +284,11 @@ const SHAMLI_CENTER = { lat: 29.45, lng: 77.31 };
 
 // 8 synthetic reporters. Realistic Indian display names; ids are clearly
 // synthetic ("seed-user-NN") so they never collide with a real device id.
+// Marker stamped on every mock issue this batch writes. The duplicate guard
+// keys off THIS — not cityName — so real Shamli reports never block reseeding,
+// and bumping the version (…-v2) lets a future revision seed afresh.
+const SHAMLI_SEED_BATCH = "shamli-demo-v1";
+
 const SHAMLI_REPORTERS = {
   u1: { id: "seed-user-01", name: "Rahul Verma" },
   u2: { id: "seed-user-02", name: "Priya Sharma" },
@@ -576,12 +581,13 @@ function buildShamliIssue(s: ShamliSeed): Issue {
   return base;
 }
 
-// Idempotent: skips if any Shamli issues already exist, so repeated taps don't
-// duplicate the demo set. stripUndefined drops any optional fields left unset
-// before writing (Firestore rejects `undefined`).
+// Idempotent: skips only if THIS mock batch was already seeded (keyed on
+// seedBatch, not cityName), so repeated taps don't duplicate the demo set while
+// real Shamli reports never trip the guard. stripUndefined drops any optional
+// fields left unset before writing (Firestore rejects `undefined`).
 export async function seedShamliData(): Promise<{ seeded: boolean; count: number }> {
   const existing = await getCountFromServer(
-    query(collection(getDb(), "issues"), where("cityName", "==", "Shamli")),
+    query(collection(getDb(), "issues"), where("seedBatch", "==", SHAMLI_SEED_BATCH)),
   );
   if (existing.data().count > 0) {
     return { seeded: false, count: existing.data().count };
@@ -592,7 +598,7 @@ export async function seedShamliData(): Promise<{ seeded: boolean; count: number
   const batch = writeBatch(getDb());
   for (const issue of issues) {
     const { id, ...rest } = issue;
-    batch.set(doc(getDb(), "issues", id), stripUndefined(rest));
+    batch.set(doc(getDb(), "issues", id), stripUndefined({ ...rest, seedBatch: SHAMLI_SEED_BATCH }));
   }
   await batch.commit();
 

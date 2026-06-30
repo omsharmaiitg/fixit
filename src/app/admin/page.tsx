@@ -106,8 +106,8 @@ export default function AdminPage() {
       setSeedShamli({
         running: false,
         message: r.seeded
-          ? `🌱 Seeded ${r.count} Shamli issues. Open the feed for a Shamli account.`
-          : `Skipped — ${r.count} Shamli issues already exist.`,
+          ? `🌱 Seeded ${r.count} Shamli mock issues. Open the feed for a Shamli account.`
+          : `Skipped — shamli-demo-v1 batch already seeded (${r.count} issues).`,
       });
     } catch (e) {
       setSeedShamli({ running: false, message: `Error: ${(e as Error).message}` });
