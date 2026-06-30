@@ -85,6 +85,14 @@ export interface AgentLoopResult {
   finalAction?: { name: string; args: Record<string, unknown> };
 }
 
+// Minimum gap (ms) between successive Gemini calls within one agent loop.
+// The Triage agent can make several tool-call turns for a single user report
+// (geocode → find_nearby → weather → severity-weight → finalize_report), and
+// firing all of them back-to-back can land inside the same RPM window and
+// trip a 429 even on a paid tier. This spaces turns out without meaningfully
+// slowing the user-visible flow (the UI already shows tool-call status lines).
+const INTER_TURN_DELAY_MS = 350;
+
 /**
  * Run a multi-step function-calling loop. Sends `contents`, executes any tool calls the model
  * requests, feeds results back, and repeats until the model returns plain text or hits maxTurns.
@@ -112,6 +120,12 @@ export async function runAgentLoop(opts: {
   let lastText = '';
 
   for (let turn = 0; turn < maxTurns; turn++) {
+    if (turn > 0) {
+      // Space out successive turns so a multi-call agent loop doesn't land
+      // all its requests in the same RPM window and trip 429s.
+      await new Promise((r) => setTimeout(r, INTER_TURN_DELAY_MS));
+    }
+
     const response = await generateContentWithRetry({
       model: MODEL,
       contents,

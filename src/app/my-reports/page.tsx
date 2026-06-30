@@ -6,16 +6,21 @@ import { motion } from "motion/react";
 import { ArrowLeft, ClipboardList, Plus, AlertTriangle } from "lucide-react";
 import { getReporterId } from "@/lib/reporter";
 import { getIssuesByReporter } from "@/lib/firebaseHelpers";
+import { useAuth } from "@/contexts/AuthContext";
 import { IssueCard } from "@/components/IssueCard";
 import { SkeletonCard } from "@/components/SkeletonCard";
 import type { Issue } from "@/types";
 
 export default function MyReportsPage() {
+  const { user, loading: authLoading } = useAuth();
   const [issues, setIssues] = useState<Issue[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    // Wait for auth to resolve so getReporterId() returns the uid (not the
+    // stale device id) for signed-in users; re-run on login/logout.
+    if (authLoading) return;
     let alive = true;
     getIssuesByReporter(getReporterId())
       .then((list) => {
@@ -33,7 +38,7 @@ export default function MyReportsPage() {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [authLoading, user]);
 
   return (
     <div className="mx-auto w-full max-w-md px-4 pb-28">
