@@ -1,4 +1,4 @@
-# 🛠️ FixIt — Hyperlocal Problem Solver
+# FixIt — Hyperlocal Problem Solver
 
 > **AI-agent-powered civic issue reporting that closes the broken loop between citizens who *see* problems and the systems meant to *fix* them.**
 
