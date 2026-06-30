@@ -1,17 +1,14 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { motion } from "motion/react";
 import { format } from "date-fns";
-import { updateProfile } from "firebase/auth";
-import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
-import { doc, setDoc } from "firebase/firestore";
+import { doc, getDoc } from "firebase/firestore";
 import {
   ArrowLeft,
-  Camera,
-  Loader2,
+  Pencil,
   LogOut,
   Plus,
   ClipboardList,
@@ -21,7 +18,6 @@ import {
 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useCity } from "@/hooks/useCity";
-import { CityPicker } from "@/components/CityPicker";
 import { getAllIssues } from "@/lib/firebaseHelpers";
 import {
   computeGamification,
@@ -29,7 +25,7 @@ import {
   recomputeUserGamification,
   type GamificationSummary,
 } from "@/lib/gamification";
-import { getFirebaseStorage, getDb } from "@/lib/firebase";
+import { getDb } from "@/lib/firebase";
 import { IssueCard } from "@/components/IssueCard";
 import { SkeletonCard } from "@/components/SkeletonCard";
 import type { Issue } from "@/types";
@@ -45,16 +41,13 @@ function initialsOf(name?: string | null, email?: string | null): string {
 export default function ProfilePage() {
   const router = useRouter();
   const { user, loading, signOut } = useAuth();
-  const { city, setCity } = useCity();
+  const { city } = useCity();
 
   const [reports, setReports] = useState<Issue[]>([]);
   const [reportsLoading, setReportsLoading] = useState(true);
   const [gam, setGam] = useState<GamificationSummary | null>(null);
   const [squadName, setSquadName] = useState<string | null>(null);
-  const [photoOverride, setPhotoOverride] = useState<string | null>(null);
-  const [uploadingPhoto, setUploadingPhoto] = useState(false);
-  const [photoError, setPhotoError] = useState<string | null>(null);
-  const fileRef = useRef<HTMLInputElement>(null);
+  const [bio, setBio] = useState<string | null>(null);
 
   // Load the corpus once auth resolves: derive this user's reports + a LIVE
   // gamification read for instant display, then recompute-and-persist (which
@@ -82,25 +75,19 @@ export default function ProfilePage() {
     };
   }, [loading, user]);
 
-  async function onPickAvatar(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file || !user) return;
-    setUploadingPhoto(true);
-    setPhotoError(null);
-    try {
-      const r = ref(getFirebaseStorage(), `avatars/${user.uid}`);
-      await uploadBytes(r, file);
-      const url = await getDownloadURL(r);
-      await updateProfile(user, { photoURL: url });
-      await setDoc(doc(getDb(), "users", user.uid), { photoURL: url }, { merge: true });
-      setPhotoOverride(url);
-    } catch {
-      setPhotoError("Couldn't update your photo. Please try again.");
-    } finally {
-      setUploadingPhoto(false);
-      e.target.value = "";
-    }
-  }
+  // Bio lives only on the user doc (auth carries name/email/photo).
+  useEffect(() => {
+    if (loading || !user) return;
+    let alive = true;
+    getDoc(doc(getDb(), "users", user.uid))
+      .then((snap) => {
+        if (alive && typeof snap.data()?.bio === "string") setBio(snap.data()!.bio);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [loading, user]);
 
   async function handleSignOut() {
     try {
@@ -151,7 +138,7 @@ export default function ProfilePage() {
   }
 
   // ── Logged in ───────────────────────────────────────────────────────────
-  const avatarUrl = photoOverride ?? user.photoURL;
+  const avatarUrl = user.photoURL;
   const reportsMade = reports.length;
   const resolvedCount = reports.filter((r) => r.status === "resolved").length;
   const points = gam?.points ?? 0;
@@ -172,9 +159,9 @@ export default function ProfilePage() {
         className="mt-2 space-y-5"
       >
         {/* identity */}
-        <section className="flex items-center gap-4 rounded-2xl bg-surface p-4 shadow-card">
-          <div className="relative">
-            <div className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-full bg-primary/10 font-display text-xl font-bold text-primary">
+        <section className="rounded-2xl bg-surface p-4 shadow-card">
+          <div className="flex items-center gap-4">
+            <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-full bg-primary/10 font-display text-xl font-bold text-primary">
               {avatarUrl ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img src={avatarUrl} alt="avatar" className="h-full w-full object-cover" />
@@ -182,31 +169,38 @@ export default function ProfilePage() {
                 initialsOf(user.displayName, user.email)
               )}
             </div>
-            <button
-              onClick={() => fileRef.current?.click()}
-              disabled={uploadingPhoto}
-              aria-label="Change photo"
-              className="absolute -bottom-1 -right-1 flex h-7 w-7 items-center justify-center rounded-full bg-primary text-white shadow-card transition active:scale-95"
+            <div className="min-w-0 flex-1">
+              <p className="truncate font-display text-lg font-bold text-foreground">
+                {user.displayName || "Citizen"}
+              </p>
+              <p className="truncate text-sm text-muted">{user.email}</p>
+              {since && <p className="mt-0.5 text-xs text-muted">Member since {since}</p>}
+            </div>
+            <Link
+              href="/profile/edit"
+              aria-label="Edit profile"
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-100 text-foreground transition active:scale-95"
             >
-              {uploadingPhoto ? <Loader2 size={13} className="animate-spin" /> : <Camera size={13} />}
-            </button>
-            <input
-              ref={fileRef}
-              type="file"
-              accept="image/*"
-              onChange={onPickAvatar}
-              className="hidden"
-            />
+              <Pencil size={15} />
+            </Link>
           </div>
-          <div className="min-w-0">
-            <p className="truncate font-display text-lg font-bold text-foreground">
-              {user.displayName || "Citizen"}
+
+          {bio && <p className="mt-3 text-sm leading-relaxed text-foreground">{bio}</p>}
+
+          {city && (
+            <p className="mt-3 flex items-center gap-1.5 text-sm font-medium text-muted">
+              <MapPin size={15} className="shrink-0 text-primary" strokeWidth={2.2} />
+              {city.cityName}
             </p>
-            <p className="truncate text-sm text-muted">{user.email}</p>
-            {since && <p className="mt-0.5 text-xs text-muted">Member since {since}</p>}
-          </div>
+          )}
+
+          <Link
+            href="/profile/edit"
+            className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-slate-200 py-2.5 text-sm font-semibold text-primary transition active:scale-[0.98]"
+          >
+            <Pencil size={15} /> Edit profile
+          </Link>
         </section>
-        {photoError && <p className="-mt-3 text-xs text-red-600">{photoError}</p>}
 
         {/* stats */}
         <section className="grid grid-cols-2 gap-3">
@@ -225,21 +219,6 @@ export default function ProfilePage() {
               {reportsMade === 1 ? "report made" : "reports made"}
             </p>
           </div>
-        </section>
-
-        {/* city — scopes the home feed (65km radius) */}
-        <section className="rounded-2xl bg-surface p-4 shadow-card">
-          <h3 className="mb-1 font-display text-sm font-bold text-foreground">Your city</h3>
-          <p className="mb-2.5 text-xs text-muted">
-            Your feed shows issues within 65 km of this city.
-          </p>
-          {city && (
-            <p className="mb-2.5 flex items-center gap-1.5 text-sm font-semibold text-foreground">
-              <MapPin size={15} className="shrink-0 text-primary" strokeWidth={2.2} />
-              {city.cityName}
-            </p>
-          )}
-          <CityPicker onPick={setCity} initialName={city?.cityName} />
         </section>
 
         {/* neighbourhood squad */}

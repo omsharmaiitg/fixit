@@ -28,6 +28,18 @@ import type { Issue } from "@/types";
 // Hard cap: the feed never shows issues beyond this from the chosen city center.
 const CITY_RADIUS_M = 65_000;
 
+// Warm civic subtitles, one picked at random per app load.
+const SUBTITLES = [
+  "Here's what your neighbourhood needs today.",
+  "Your ward is counting on eyes like yours.",
+  "Small reports, real change — let's go.",
+  "Every report you make moves your street up the list.",
+  "Spot it, report it, watch your city respond.",
+  "The fastest fixes start with one honest report.",
+  "Your block gets better the moment you speak up.",
+  "Be the reason something gets fixed this week.",
+];
+
 type Tab = "active" | "resolved";
 
 function initialsOf(name?: string | null, email?: string | null): string {
@@ -61,16 +73,20 @@ export default function HomePage() {
   // Pull the full corpus; we apply the 65km city cap + distance-pill filter below.
   const { issues, loading, error, refresh } = useIssues(null, null, null);
 
-  // Greeting is time-of-day. Computed in an effect (not at render) so the
-  // static prerender and the client agree — no hydration mismatch.
+  // Greeting (time-of-day) + subtitle (random) are client-only — read in an
+  // effect so the static prerender and client agree (no hydration mismatch).
   const [greeting, setGreeting] = useState<string | null>(null);
+  const [subtitle, setSubtitle] = useState<string | null>(null);
 
   useEffect(() => {
-    // Greeting depends on the client's clock, so it's read after mount — a
-    // static prerender would otherwise freeze it to build time. One-shot.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setGreeting(greetingForHour(new Date().getHours()));
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setSubtitle(SUBTITLES[Math.floor(Math.random() * SUBTITLES.length)]);
   }, []);
+
+  // First name only, when signed in — guests get the bare time greeting.
+  const firstName = user?.displayName?.trim().split(/\s+/)[0] ?? null;
 
   // Ask for location once so the distance pills can use live GPS.
   useEffect(() => {
@@ -158,7 +174,8 @@ export default function HomePage() {
       <section className="mt-3 rounded-3xl bg-gradient-to-br from-amber-50 via-surface to-surface p-5 shadow-card">
         {greeting ? (
           <h2 className="font-display text-[26px] font-extrabold leading-tight text-foreground">
-            {greeting} <span className="align-middle">👋</span>
+            {greeting}
+            {firstName ? `, ${firstName}` : ""} <span className="align-middle">👋</span>
           </h2>
         ) : (
           <div className="h-7 w-44 animate-pulse rounded-full bg-slate-200" />
@@ -167,10 +184,9 @@ export default function HomePage() {
           <MapPin size={15} className="shrink-0 text-primary" strokeWidth={2.2} />
           <span className="truncate">{city?.cityName ?? "Choose your city"}</span>
         </p>
-        <p className="mt-3 text-sm leading-relaxed text-muted">
-          Here&apos;s what your neighbourhood needs today. Every report moves it
-          up the list.
-        </p>
+        {subtitle && (
+          <p className="mt-3 text-sm leading-relaxed text-muted">{subtitle}</p>
+        )}
       </section>
 
       {/* top-level tabs */}

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { collection, getDocs, writeBatch } from "firebase/firestore";
 import { getDb } from "@/lib/firebase";
-import { seedDemoData } from "@/lib/seedData";
+import { seedDemoData, seedDemoIntelligence } from "@/lib/seedData";
 import { calculatePressureScore, getAgingStatus } from "@/lib/pressureScore";
 import {
   issueFromSnapshot,
@@ -37,6 +37,7 @@ export default function AdminPage() {
   const { user } = useAuth();
   const [open, setOpen] = useState(false);
   const [seed, setSeed] = useState<State>({ running: false, message: "" });
+  const [seedIntel, setSeedIntel] = useState<State>({ running: false, message: "" });
   const [recalc, setRecalc] = useState<State>({ running: false, message: "" });
   const [watchtower, setWatchtower] = useState<State>({ running: false, message: "" });
   const [attach, setAttach] = useState<State>({ running: false, message: "" });
@@ -81,6 +82,19 @@ export default function AdminPage() {
       });
     } catch (e) {
       setSeed({ running: false, message: `Error: ${(e as Error).message}` });
+    }
+  }
+
+  async function handleSeedIntel() {
+    setSeedIntel({ running: true, message: "" });
+    try {
+      const r = await seedDemoIntelligence();
+      setSeedIntel({
+        running: false,
+        message: `🌱 Seeded ${r.hotspots} hotspots + 1 weekly report. Open the dashboard to see them.`,
+      });
+    } catch (e) {
+      setSeedIntel({ running: false, message: `Error: ${(e as Error).message}` });
     }
   }
 
@@ -211,6 +225,11 @@ export default function AdminPage() {
               label="🌱 Seed Demo Data"
               state={seed}
               onClick={handleSeed}
+            />
+            <ToolButton
+              label="🌱 Seed demo intelligence"
+              state={seedIntel}
+              onClick={handleSeedIntel}
             />
             <ToolButton
               label="🔄 Recalculate All Pressure Scores"

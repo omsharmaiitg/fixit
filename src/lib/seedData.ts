@@ -203,3 +203,66 @@ export async function seedDemoData(): Promise<{ seeded: boolean; count: number }
   await batch.commit();
   return { seeded: true, count: issues.length };
 }
+
+// Sample "intelligence" the Watchtower normally writes (hotspots + weekly
+// report), so the dashboard demos well without a live run. Doc shapes mirror
+// watchtowerAgent.ts exactly: hotspot id = `hotspot_<lat>_<lng>`, report id =
+// `report-<date>` with generatedAt=now so it's the latest. setDoc(merge) keeps
+// it idempotent and a real "Run Watchtower Now" later overwrites it.
+const DEMO_HOTSPOTS = [
+  {
+    lat: 28.632,
+    lng: 77.219,
+    category: "road_damage" as IssueCategory,
+    riskLevel: "high" as const,
+    reasoning:
+      "Three road-damage and exposed-wiring reports cluster around Connaught Place; recent rain accelerates surface breakup, so a fresh pothole here next week is likely.",
+    radiusM: 250,
+  },
+  {
+    lat: 28.701,
+    lng: 77.268,
+    category: "drainage_flooding" as IssueCategory,
+    riskLevel: "medium" as const,
+    reasoning:
+      "Bhajanpura already logged severe waterlogging and the area has weak storm drainage; another monsoon downpour would likely flood the same low-lying stretch.",
+    radiusM: 300,
+  },
+];
+
+const DEMO_REPORT = {
+  glance:
+    "15 issues on the public record this week — most still open, with road damage and public-safety hazards leading the board.",
+  highlight:
+    "A leaning tree blocking a DLF Phase 3 road was reported, fixed, and community-confirmed — the loop closed end to end.",
+  theShame:
+    "Exposed electrical wiring near Connaught Place has sat acknowledged-but-untouched for 19 days, in a rain-prone, high-footfall block.",
+  topContributor:
+    "Anil P. filed the most reports this week, including the CP wiring hazard — the kind of vigilance this ward runs on.",
+  nextWeekWatch:
+    "The Connaught Place road-damage cluster and Bhajanpura drainage are the two areas most likely to throw up a new issue.",
+  verdict: "The neighbourhood is watching. Now it needs the authority to move.",
+};
+
+export async function seedDemoIntelligence(): Promise<{ hotspots: number; report: boolean }> {
+  const batch = writeBatch(getDb());
+
+  for (const h of DEMO_HOTSPOTS) {
+    const id = `hotspot_${h.lat.toFixed(3)}_${h.lng.toFixed(3)}`;
+    batch.set(
+      doc(getDb(), "hotspots", id),
+      stripUndefined({ ...h, predictedAt: new Date(now) }),
+      { merge: true },
+    );
+  }
+
+  const reportId = `report-${new Date(now).toISOString().slice(0, 10)}`;
+  batch.set(
+    doc(getDb(), "reports", reportId),
+    stripUndefined({ ...DEMO_REPORT, generatedAt: new Date(now) }),
+    { merge: true },
+  );
+
+  await batch.commit();
+  return { hotspots: DEMO_HOTSPOTS.length, report: true };
+}
