@@ -25,6 +25,7 @@ import {
 } from "@/lib/firebaseHelpers";
 import { calculatePressureScore, BASELINE_WEIGHT } from "@/lib/pressureScore";
 import { resolveUpvoteWeight } from "@/lib/upvoteLocation";
+import { recomputeUserGamification } from "@/lib/gamification";
 import { getReporterId } from "@/lib/reporter";
 import {
   CATEGORY_EMOJIS,
@@ -155,6 +156,7 @@ export default function IssueDetailPage() {
       setIssue((prev) => prev && toggleUpvoteLocal(prev, reporterId, weight));
       try {
         await upvoteIssue(id, reporterId, weight);
+        void recomputeUserGamification(reporterId).catch(() => {});
       } catch {
         setIssue((prev) => prev && toggleUpvoteLocal(prev, reporterId, weight));
       } finally {
@@ -189,6 +191,7 @@ export default function IssueDetailPage() {
         await confirmResolution(id, reporterId, agree);
         const fresh = await getIssueById(id);
         if (fresh) setIssue(fresh);
+        void recomputeUserGamification(reporterId).catch(() => {});
       } finally {
         setResolveBusy(false);
       }

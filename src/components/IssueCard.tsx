@@ -23,6 +23,7 @@ import {
 } from "@/lib/firebaseHelpers";
 import { getPressureColor, BASELINE_WEIGHT } from "@/lib/pressureScore";
 import { resolveUpvoteWeight } from "@/lib/upvoteLocation";
+import { recomputeUserGamification } from "@/lib/gamification";
 import { getReporterId } from "@/lib/reporter";
 import { useRequireAuth, LoginPrompt } from "@/components/LoginPrompt";
 
@@ -93,6 +94,7 @@ export function IssueCard({
               userLng,
             );
         await upvoteIssue(issue.id, reporterId, weight);
+        void recomputeUserGamification(reporterId).catch(() => {});
       } finally {
         setUpBusy(false);
       }

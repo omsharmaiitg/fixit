@@ -19,8 +19,13 @@ import {
   Lock,
 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
-import { getReporterId } from "@/lib/reporter";
-import { getIssuesByReporter } from "@/lib/firebaseHelpers";
+import { getAllIssues } from "@/lib/firebaseHelpers";
+import {
+  computeGamification,
+  deriveActivity,
+  recomputeUserGamification,
+  type GamificationSummary,
+} from "@/lib/gamification";
 import { getFirebaseStorage, getDb } from "@/lib/firebase";
 import { IssueCard } from "@/components/IssueCard";
 import { SkeletonCard } from "@/components/SkeletonCard";
@@ -43,31 +48,40 @@ function initialsOf(name?: string | null, email?: string | null): string {
   return base.slice(0, 2).toUpperCase();
 }
 
-function levelFor(points: number): string {
-  if (points >= 150) return "Guardian";
-  if (points >= 50) return "Contributor";
-  return "Newcomer";
-}
-
 export default function ProfilePage() {
   const router = useRouter();
   const { user, loading, signOut } = useAuth();
 
   const [reports, setReports] = useState<Issue[]>([]);
   const [reportsLoading, setReportsLoading] = useState(true);
+  const [gam, setGam] = useState<GamificationSummary | null>(null);
+  const [squadName, setSquadName] = useState<string | null>(null);
   const [photoOverride, setPhotoOverride] = useState<string | null>(null);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [photoError, setPhotoError] = useState<string | null>(null);
   const [prefLang, setPrefLang] = useState("en");
   const fileRef = useRef<HTMLInputElement>(null);
 
-  // Fetch this user's reports once auth has resolved. State only set in async
-  // callbacks (never synchronously in the effect body).
+  // Load the corpus once auth resolves: derive this user's reports + a LIVE
+  // gamification read for instant display, then recompute-and-persist (which
+  // also assigns a squad) in the background. State only set in async callbacks.
   useEffect(() => {
     if (loading || !user) return;
+    const uid = user.uid;
     let alive = true;
-    getIssuesByReporter(getReporterId())
-      .then((list) => alive && (setReports(list), setReportsLoading(false)))
+    getAllIssues()
+      .then((issues) => {
+        if (!alive) return;
+        const mine = issues
+          .filter((i) => i.reporterId === uid)
+          .sort((a, b) => b.reportedAt.getTime() - a.reportedAt.getTime());
+        setReports(mine);
+        setGam(computeGamification(deriveActivity(uid, issues)));
+        setReportsLoading(false);
+        recomputeUserGamification(uid, { issues, withSquad: true })
+          .then((r) => alive && setSquadName(r.squadName))
+          .catch(() => {});
+      })
       .catch(() => alive && setReportsLoading(false));
     return () => {
       alive = false;
@@ -146,20 +160,12 @@ export default function ProfilePage() {
   const avatarUrl = photoOverride ?? user.photoURL;
   const reportsMade = reports.length;
   const resolvedCount = reports.filter((r) => r.status === "resolved").length;
-  const points = reportsMade * 10;
-  const level = levelFor(points);
+  const points = gam?.points ?? 0;
+  const level = gam?.level ?? "Newcomer";
+  const badges = gam?.badges ?? [];
   const since = user.metadata?.creationTime
     ? format(new Date(user.metadata.creationTime), "MMM yyyy")
     : null;
-
-  const badges = [
-    { emoji: "🚑", name: "First Responder", hint: "File your first report", earned: reportsMade >= 1 },
-    { emoji: "👀", name: "Neighbourhood Watch", hint: "File 5 reports", earned: reportsMade >= 5 },
-    { emoji: "🛠️", name: "Issue Slayer", hint: "Get a report resolved", earned: resolvedCount >= 1 },
-    { emoji: "🛡️", name: "Guardian", hint: "Earn 150 civic points", earned: points >= 150 },
-    { emoji: "✅", name: "Top Verifier", hint: "Verify 10 issues", earned: false },
-    { emoji: "🔍", name: "Root Cause Finder", hint: "Add a cited cause", earned: false },
-  ];
 
   return (
     <div className="mx-auto w-full max-w-md px-5 pb-16">
@@ -226,6 +232,21 @@ export default function ProfilePage() {
             </p>
           </div>
         </section>
+
+        {/* neighbourhood squad */}
+        {squadName && (
+          <section className="flex items-center gap-3 rounded-2xl bg-surface p-4 shadow-card">
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-lg">
+              🛡️
+            </span>
+            <div className="min-w-0">
+              <p className="truncate font-display text-sm font-bold text-foreground">
+                {squadName}
+              </p>
+              <p className="text-xs text-muted">Your neighbourhood squad</p>
+            </div>
+          </section>
+        )}
 
         {/* badges */}
         <section>

@@ -34,6 +34,7 @@ import type {
   IssueStatus,
   PredictedHotspot,
   ProblemZone,
+  Squad,
   User,
 } from "@/types";
 
@@ -541,6 +542,43 @@ export async function awardPoints(userId: string, points: number): Promise<void>
 
 export async function awardBadge(userId: string, badge: Badge): Promise<void> {
   await updateDoc(doc(getDb(), "users", userId), { badges: arrayUnion(badge) });
+}
+
+// Idempotent gamification write (points + the full earned-badge set), used by
+// the recompute path so re-running never double-counts. Owner-only per rules.
+export async function saveUserGamification(
+  userId: string,
+  data: { points: number; badges: Badge[] },
+): Promise<void> {
+  await setDoc(
+    doc(getDb(), "users", userId),
+    { points: data.points, badges: data.badges },
+    { merge: true },
+  );
+}
+
+// ─── Squads ──────────────────────────────────────────────────────────────────
+
+export async function getSquads(): Promise<Squad[]> {
+  const snap = await getDocs(collection(getDb(), "squads"));
+  return snap.docs.map((d) => tsToDate({ ...d.data(), id: d.id }) as Squad);
+}
+
+export async function addUserToSquad(squadId: string, userId: string): Promise<void> {
+  await updateDoc(doc(getDb(), "squads", squadId), {
+    memberIds: arrayUnion(userId),
+  });
+}
+
+export async function createSquad(
+  squad: Omit<Squad, "id" | "createdAt">,
+): Promise<string> {
+  const id = crypto.randomUUID();
+  await setDoc(
+    doc(getDb(), "squads", id),
+    stripUndefined({ ...squad, createdAt: new Date() }),
+  );
+  return id;
 }
 
 // ─── Pure helpers ────────────────────────────────────────────────────────────

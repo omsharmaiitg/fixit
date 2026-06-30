@@ -25,6 +25,7 @@ import {
 } from "@/lib/pressureScore";
 import { base64ToBlob } from "@/lib/imageUtils";
 import { getReporterId } from "@/lib/reporter";
+import { recomputeUserGamification } from "@/lib/gamification";
 import { useAuth } from "@/contexts/AuthContext";
 import {
   CATEGORY_LABELS,
@@ -188,6 +189,8 @@ export default function ReportPage() {
       issue.pressureBreakdown = breakdown;
 
       await createIssue(issue);
+      // Award points / badges for the new report (best-effort, non-blocking).
+      void recomputeUserGamification(reporterId).catch(() => {});
       router.push(`/issue/${id}`);
     } catch (e) {
       setError((e as Error).message);
