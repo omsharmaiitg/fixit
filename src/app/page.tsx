@@ -4,7 +4,6 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { motion } from "motion/react";
 import {
-  Bell,
   User,
   AlertTriangle,
   RotateCw,
@@ -15,12 +14,19 @@ import {
 } from "lucide-react";
 import { useLocation } from "@/hooks/useLocation";
 import { useIssues, sortIssues } from "@/hooks/useIssues";
+import { useCity } from "@/hooks/useCity";
+import { haversineDistance } from "@/lib/firebaseHelpers";
 import { FilterBar } from "@/components/FilterBar";
+import { CityPicker } from "@/components/CityPicker";
 import { IssueCard } from "@/components/IssueCard";
 import { SkeletonCard } from "@/components/SkeletonCard";
 import { FABButton } from "@/components/FABButton";
 import { useAuth } from "@/contexts/AuthContext";
+import type { City } from "@/lib/city";
 import type { Issue } from "@/types";
+
+// Hard cap: the feed never shows issues beyond this from the chosen city center.
+const CITY_RADIUS_M = 65_000;
 
 type Tab = "active" | "resolved";
 
@@ -48,24 +54,16 @@ function greetingForHour(h: number): string {
 
 export default function HomePage() {
   const { user } = useAuth();
+  const { city, resolved: cityResolved, setCity } = useCity();
   const [tab, setTab] = useState<Tab>("active");
   const [distanceFilter, setDistanceFilter] = useState<number | null>(2000);
   const { userLat, userLng, requestLocation } = useLocation();
-  const { issues, loading, error, refresh } = useIssues(
-    distanceFilter,
-    userLat,
-    userLng,
-  );
+  // Pull the full corpus; we apply the 65km city cap + distance-pill filter below.
+  const { issues, loading, error, refresh } = useIssues(null, null, null);
 
   // Greeting is time-of-day. Computed in an effect (not at render) so the
   // static prerender and the client agree — no hydration mismatch.
   const [greeting, setGreeting] = useState<string | null>(null);
-  // Reverse-geocoded ward. `resolved` lets us tell "still locating" from
-  // "located, but no name" so the line never hangs on "Pinpointing…".
-  const [ward, setWard] = useState<{ value: string | null; resolved: boolean }>({
-    value: null,
-    resolved: false,
-  });
 
   useEffect(() => {
     // Greeting depends on the client's clock, so it's read after mount — a
@@ -74,49 +72,53 @@ export default function HomePage() {
     setGreeting(greetingForHour(new Date().getHours()));
   }, []);
 
-  // Ask for location once so distance filtering + labels work.
+  // Ask for location once so the distance pills can use live GPS.
   useEffect(() => {
     requestLocation();
   }, [requestLocation]);
 
-  // Reverse-geocode the ward via the server route (key stays server-side).
-  // Key on coarse coords (~110m) so GPS jitter doesn't refetch.
-  const latKey = userLat != null ? userLat.toFixed(3) : null;
-  const lngKey = userLng != null ? userLng.toFixed(3) : null;
-  useEffect(() => {
-    if (!latKey || !lngKey) return;
-    let alive = true;
-    fetch(`/api/geocode?lat=${latKey}&lng=${lngKey}`)
-      .then((r) => r.json())
-      .then((d) => alive && setWard({ value: d.locality ?? null, resolved: true }))
-      .catch(() => alive && setWard({ value: null, resolved: true }));
-    return () => {
-      alive = false;
-    };
-  }, [latKey, lngKey]);
+  // 65km hard cap around the chosen city, then the distance-pill filter — pills
+  // measure from live GPS when available, else from the city center. "All"
+  // (distanceFilter null) = the full city radius.
+  const cityFiltered = useMemo(() => {
+    if (!city) return [];
+    let pool = issues.filter(
+      (i) =>
+        haversineDistance(city.cityLat, city.cityLng, i.location.lat, i.location.lng) <=
+        CITY_RADIUS_M,
+    );
+    if (distanceFilter != null) {
+      const cLat = userLat ?? city.cityLat;
+      const cLng = userLng ?? city.cityLng;
+      pool = pool.filter(
+        (i) =>
+          haversineDistance(cLat, cLng, i.location.lat, i.location.lng) <= distanceFilter,
+      );
+    }
+    return pool;
+  }, [issues, city, distanceFilter, userLat, userLng]);
 
-  const wardLine =
-    userLat == null
-      ? "Turn on location to see your ward"
-      : !ward.resolved
-        ? "Pinpointing your area…"
-        : (ward.value ?? "Near you");
-
-  // `issues` is already distance-filtered by the subscription; split by tab,
-  // then sort each tab on its own axis.
   const sorted = useMemo(() => {
     if (tab === "resolved") {
-      return issues
+      return cityFiltered
         .filter((i) => i.status === "resolved")
         .sort((a, b) => resolvedTime(b) - resolvedTime(a));
     }
     return sortIssues(
-      issues.filter((i) => i.status !== "resolved"),
+      cityFiltered.filter((i) => i.status !== "resolved"),
       "pressure",
       userLat,
       userLng,
     );
-  }, [issues, tab, userLat, userLng]);
+  }, [cityFiltered, tab, userLat, userLng]);
+
+  // Treat "city still resolving" as loading so the feed doesn't flash empty.
+  const showLoading = loading || !cityResolved;
+
+  // First run / no city chosen → onboarding picker before the feed.
+  if (cityResolved && !city) {
+    return <CityOnboarding onPick={setCity} />;
+  }
 
   const kmLabel = distanceFilter ? `within ${distanceFilter / 1000} km` : "everywhere";
 
@@ -135,12 +137,6 @@ export default function HomePage() {
           >
             <BarChart3 size={18} strokeWidth={2} />
           </Link>
-          <button
-            aria-label="Notifications"
-            className="flex h-9 w-9 items-center justify-center rounded-full bg-surface text-muted shadow-card transition active:scale-95"
-          >
-            <Bell size={18} strokeWidth={2} />
-          </button>
           <Link
             href="/profile"
             aria-label={user ? "Profile" : "Sign in"}
@@ -169,7 +165,7 @@ export default function HomePage() {
         )}
         <p className="mt-1.5 flex items-center gap-1.5 text-sm font-medium text-muted">
           <MapPin size={15} className="shrink-0 text-primary" strokeWidth={2.2} />
-          <span className="truncate">{wardLine}</span>
+          <span className="truncate">{city?.cityName ?? "Choose your city"}</span>
         </p>
         <p className="mt-3 text-sm leading-relaxed text-muted">
           Here&apos;s what your neighbourhood needs today. Every report moves it
@@ -204,7 +200,7 @@ export default function HomePage() {
       <FilterBar value={distanceFilter} onChange={setDistanceFilter} />
 
       {/* count summary */}
-      {!loading && !error && (
+      {!showLoading && !error && (
         <p className="mb-3 mt-1 px-1 text-xs font-medium text-muted">
           <span className="font-bold text-foreground">{sorted.length}</span>{" "}
           {tab === "resolved"
@@ -231,7 +227,7 @@ export default function HomePage() {
       )}
 
       {/* loading skeletons */}
-      {loading && !error && (
+      {showLoading && !error && (
         <div className="space-y-3">
           {Array.from({ length: 5 }).map((_, i) => (
             <SkeletonCard key={i} />
@@ -240,7 +236,7 @@ export default function HomePage() {
       )}
 
       {/* empty state */}
-      {!loading && !error && sorted.length === 0 && (
+      {!showLoading && !error && sorted.length === 0 && (
         <div className="mt-10 flex flex-col items-center px-6 text-center">
           {tab === "resolved" ? (
             <>
@@ -273,7 +269,7 @@ export default function HomePage() {
       )}
 
       {/* feed */}
-      {!loading && !error && sorted.length > 0 && (
+      {!showLoading && !error && sorted.length > 0 && (
         <div className="space-y-3">
           {sorted.map((issue, i) => (
             <motion.div
@@ -293,6 +289,33 @@ export default function HomePage() {
       )}
 
       <FABButton />
+    </div>
+  );
+}
+
+// First-run city selection. Shown until a city is chosen; the choice is then
+// persisted (cookie for guests, user doc when logged in) by useCity.setCity.
+function CityOnboarding({ onPick }: { onPick: (city: City) => void }) {
+  return (
+    <div className="mx-auto flex min-h-[100dvh] w-full max-w-md flex-col justify-center px-6">
+      <motion.div
+        initial={{ opacity: 0, y: 14 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
+      >
+        <h1 className="font-display text-2xl font-extrabold tracking-tight text-primary-dark">
+          Welcome to FixIt 👋
+        </h1>
+        <div className="mt-1 flex items-center gap-1.5 text-sm font-medium text-muted">
+          <MapPin size={15} className="shrink-0 text-primary" strokeWidth={2.2} />
+          Which city are you in?
+        </div>
+        <p className="mt-3 mb-4 text-sm leading-relaxed text-muted">
+          We&apos;ll show you civic issues reported across your city, so your feed
+          stays local and relevant.
+        </p>
+        <CityPicker onPick={onPick} />
+      </motion.div>
     </div>
   );
 }

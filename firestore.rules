@@ -51,14 +51,19 @@ service cloud.firestore {
       // DNA history stays immutable in both cases; the doc can never be deleted.
       allow update: if dnaAppendOnly() && (signedIn() || recomputeFieldsOnly());
 
-      allow delete: if false; // issues are a permanent public record
+      // Normally a permanent public record. Deletes are permitted for the admin
+      // "Reset all data" dev tool (simulated-authority scope) — a signed-in
+      // operator may clear the corpus for a fresh slate.
+      allow delete: if signedIn();
     }
 
     match /users/{userId} {
       // A user's profile doc is private to that user.
       allow read: if signedIn() && request.auth.uid == userId;
       allow create, update: if signedIn() && request.auth.uid == userId;
-      allow delete: if false;
+      // Allow deletes for the admin "Reset all data" dev tool (clears Firestore
+      // user docs only; Firebase Auth accounts are separate).
+      allow delete: if signedIn();
     }
 
     // Per-user notifications (issue acknowledged, etc.). Readable only by the

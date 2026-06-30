@@ -1,4 +1,4 @@
-import type { CapturedImage } from "@/lib/imageUtils";
+import type { CapturedImage, CapturedMedia } from "@/lib/imageUtils";
 
 // The draft the Triage Agent hands back via finalize_report.args. Loosely typed
 // (category/language are raw agent strings) — normalized to our unions at submit.
@@ -20,4 +20,4 @@ export interface ConfirmedLocation {
   address: string;
 }
 
-export type { CapturedImage };
+export type { CapturedImage, CapturedMedia };

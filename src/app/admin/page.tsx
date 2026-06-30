@@ -20,6 +20,19 @@ import type { Issue } from "@/types";
 
 type State = { running: boolean; message: string };
 
+// Delete every doc in a collection, chunked under Firestore's 500-op batch
+// limit. Returns how many were deleted.
+async function clearCollection(name: string): Promise<number> {
+  const snap = await getDocs(collection(getDb(), name));
+  const docs = snap.docs;
+  for (let i = 0; i < docs.length; i += 450) {
+    const batch = writeBatch(getDb());
+    docs.slice(i, i + 450).forEach((d) => batch.delete(d.ref));
+    await batch.commit();
+  }
+  return docs.length;
+}
+
 export default function AdminPage() {
   const { user } = useAuth();
   const [open, setOpen] = useState(false);
@@ -27,6 +40,7 @@ export default function AdminPage() {
   const [recalc, setRecalc] = useState<State>({ running: false, message: "" });
   const [watchtower, setWatchtower] = useState<State>({ running: false, message: "" });
   const [attach, setAttach] = useState<State>({ running: false, message: "" });
+  const [reset, setReset] = useState<State>({ running: false, message: "" });
   // Server-only secret — operator pastes it; never bundled into the client.
   const [secret, setSecret] = useState("");
 
@@ -116,6 +130,38 @@ export default function AdminPage() {
     }
   }
 
+  // Wipe every Firestore collection for a clean slate before reseeding mock
+  // data. NOTE: this clears FIRESTORE ONLY — Firebase Auth accounts are stored
+  // separately and must be deleted from the Firebase Console if needed.
+  async function handleReset() {
+    if (
+      !window.confirm(
+        "Delete ALL Firestore data (issues, problem zones, hotspots, reports, squads, users)? This cannot be undone.",
+      )
+    ) {
+      return;
+    }
+    setReset({ running: true, message: "" });
+    try {
+      const collections = [
+        "issues",
+        "problemZones",
+        "hotspots",
+        "reports",
+        "squads",
+        "users",
+      ];
+      let total = 0;
+      for (const name of collections) total += await clearCollection(name);
+      setReset({
+        running: false,
+        message: `🗑️ Cleared ${total} documents. Auth accounts are separate — clear them in the Firebase Console if needed.`,
+      });
+    } catch (e) {
+      setReset({ running: false, message: `Error: ${(e as Error).message}` });
+    }
+  }
+
   async function handleWatchtower() {
     setWatchtower({ running: true, message: "" });
     try {
@@ -188,6 +234,15 @@ export default function AdminPage() {
                 label="🛰️ Run Watchtower Now"
                 state={watchtower}
                 onClick={handleWatchtower}
+              />
+            </div>
+
+            <div className="border-t border-gray-100 pt-3">
+              <ToolButton
+                label="🗑️ Reset all data"
+                state={reset}
+                onClick={handleReset}
+                danger
               />
             </div>
           </div>
@@ -404,17 +459,21 @@ function ToolButton({
   label,
   state,
   onClick,
+  danger = false,
 }: {
   label: string;
   state: State;
   onClick: () => void;
+  danger?: boolean;
 }) {
   return (
     <div>
       <button
         onClick={onClick}
         disabled={state.running}
-        className="w-full rounded-lg bg-[#1d4ed8] px-4 py-2.5 text-sm font-medium text-white transition active:scale-95 disabled:opacity-60"
+        className={`w-full rounded-lg px-4 py-2.5 text-sm font-medium text-white transition active:scale-95 disabled:opacity-60 ${
+          danger ? "bg-[#dc2626]" : "bg-[#1d4ed8]"
+        }`}
       >
         {state.running ? "Working…" : label}
       </button>

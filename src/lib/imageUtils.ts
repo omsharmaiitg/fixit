@@ -8,6 +8,35 @@ export interface CapturedImage {
   preview: string;
 }
 
+// A report attachment that is EITHER an analyzed image or a (not-yet-analyzed)
+// video. Images carry base64 for Gemini + Storage; videos carry the raw File and
+// are uploaded straight to Storage (never sent to Gemini).
+export interface CapturedMedia {
+  kind: "image" | "video";
+  mimeType: string;
+  preview: string; // data URL (image) or object URL (video)
+  base64?: string; // image only
+  file?: File; // video only
+}
+
+// ponytail: object URL isn't revoked — the report flow is short-lived, so the
+// leak is bounded to one navigation.
+export function fileToCapturedVideo(file: File): CapturedMedia {
+  return {
+    kind: "video",
+    mimeType: file.type || "video/mp4",
+    preview: URL.createObjectURL(file),
+    file,
+  };
+}
+
+// Single entry point for the device picker: route videos vs images.
+export async function fileToCapturedMedia(file: File): Promise<CapturedMedia> {
+  if (file.type.startsWith("video/")) return fileToCapturedVideo(file);
+  const img = await fileToCapturedImage(file);
+  return { kind: "image", mimeType: img.mimeType, preview: img.preview, base64: img.base64 };
+}
+
 // Cap the longest edge and re-encode as JPEG before sending to Gemini/Storage.
 // Gemini's image understanding doesn't need full phone-camera resolution, and
 // the API bills/limits image tokens based on resolution — a multi-MB photo can

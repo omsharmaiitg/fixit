@@ -17,8 +17,11 @@ import {
   ClipboardList,
   Trophy,
   Lock,
+  MapPin,
 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
+import { useCity } from "@/hooks/useCity";
+import { CityPicker } from "@/components/CityPicker";
 import { getAllIssues } from "@/lib/firebaseHelpers";
 import {
   computeGamification,
@@ -31,15 +34,6 @@ import { IssueCard } from "@/components/IssueCard";
 import { SkeletonCard } from "@/components/SkeletonCard";
 import type { Issue } from "@/types";
 
-const LANGUAGES = [
-  { code: "en", label: "English" },
-  { code: "hi", label: "हिन्दी (Hindi)" },
-  { code: "ta", label: "தமிழ் (Tamil)" },
-  { code: "bn", label: "বাংলা (Bengali)" },
-  { code: "te", label: "తెలుగు (Telugu)" },
-  { code: "mr", label: "मराठी (Marathi)" },
-];
-
 function initialsOf(name?: string | null, email?: string | null): string {
   const base = (name || email || "").trim();
   if (!base) return "?";
@@ -51,6 +45,7 @@ function initialsOf(name?: string | null, email?: string | null): string {
 export default function ProfilePage() {
   const router = useRouter();
   const { user, loading, signOut } = useAuth();
+  const { city, setCity } = useCity();
 
   const [reports, setReports] = useState<Issue[]>([]);
   const [reportsLoading, setReportsLoading] = useState(true);
@@ -59,7 +54,6 @@ export default function ProfilePage() {
   const [photoOverride, setPhotoOverride] = useState<string | null>(null);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [photoError, setPhotoError] = useState<string | null>(null);
-  const [prefLang, setPrefLang] = useState("en");
   const fileRef = useRef<HTMLInputElement>(null);
 
   // Load the corpus once auth resolves: derive this user's reports + a LIVE
@@ -233,6 +227,21 @@ export default function ProfilePage() {
           </div>
         </section>
 
+        {/* city — scopes the home feed (65km radius) */}
+        <section className="rounded-2xl bg-surface p-4 shadow-card">
+          <h3 className="mb-1 font-display text-sm font-bold text-foreground">Your city</h3>
+          <p className="mb-2.5 text-xs text-muted">
+            Your feed shows issues within 65 km of this city.
+          </p>
+          {city && (
+            <p className="mb-2.5 flex items-center gap-1.5 text-sm font-semibold text-foreground">
+              <MapPin size={15} className="shrink-0 text-primary" strokeWidth={2.2} />
+              {city.cityName}
+            </p>
+          )}
+          <CityPicker onPick={setCity} initialName={city?.cityName} />
+        </section>
+
         {/* neighbourhood squad */}
         {squadName && (
           <section className="flex items-center gap-3 rounded-2xl bg-surface p-4 shadow-card">
@@ -323,29 +332,11 @@ export default function ProfilePage() {
           )}
         </section>
 
-        {/* settings */}
+        {/* account */}
         <section className="rounded-2xl bg-surface p-4 shadow-card">
-          <h3 className="mb-3 font-display text-sm font-bold text-foreground">Settings</h3>
-          <label className="block">
-            <span className="mb-1 block text-xs font-semibold text-muted">
-              Preferred language
-            </span>
-            <select
-              value={prefLang}
-              onChange={(e) => setPrefLang(e.target.value)}
-              className="w-full rounded-xl border border-slate-200 bg-surface px-3 py-2.5 text-sm outline-none focus:border-primary"
-            >
-              {LANGUAGES.map((l) => (
-                <option key={l.code} value={l.code}>
-                  {l.label}
-                </option>
-              ))}
-            </select>
-          </label>
-
           <button
             onClick={handleSignOut}
-            className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl border border-red-200 bg-red-50 py-2.5 text-sm font-semibold text-red-600 transition active:scale-[0.98]"
+            className="flex w-full items-center justify-center gap-2 rounded-xl border border-red-200 bg-red-50 py-2.5 text-sm font-semibold text-red-600 transition active:scale-[0.98]"
           >
             <LogOut size={16} /> Sign out
           </button>

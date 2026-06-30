@@ -5,13 +5,14 @@ import { useRouter } from "next/navigation";
 import { motion } from "motion/react";
 import {
   Camera,
+  ImagePlus,
   Mic,
   Send,
   Loader2,
   AlertTriangle,
   ArrowRight,
 } from "lucide-react";
-import { fileToCapturedImage, base64ToBlob, type CapturedImage } from "@/lib/imageUtils";
+import { fileToCapturedMedia, base64ToBlob, type CapturedMedia } from "@/lib/imageUtils";
 import {
   getIssueById,
   uploadIssuePhoto,
@@ -38,7 +39,7 @@ interface ChatMessage {
   id: string;
   role: "user" | "assistant" | "error";
   text: string;
-  imagePreview?: string;
+  media?: { kind: "image" | "video"; preview: string };
   tools?: { name: string; args: Record<string, unknown> }[];
 }
 
@@ -60,42 +61,42 @@ const uid = () => crypto.randomUUID();
 export function TriageChat({
   onFinalized,
 }: {
-  onFinalized: (draft: ReportDraft, photo: CapturedImage | null) => void;
+  onFinalized: (draft: ReportDraft, media: CapturedMedia | null) => void;
 }) {
   const router = useRouter();
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       id: uid(),
       role: "assistant",
-      text: "Hi! I'm here to help you report a local issue. Tell me what you spotted and roughly where — type it, speak it, or snap a photo.",
+      text: "Hi! I'm here to help you report a local issue. Where did you spot it? Tell me the location, what's wrong, and add a photo or video if you can.",
     },
   ]);
   const [history, setHistory] = useState<{ role: "user" | "model"; text: string }[]>([]);
   const [input, setInput] = useState("");
-  const [pendingImage, setPendingImage] = useState<CapturedImage | null>(null);
-  const [reportPhoto, setReportPhoto] = useState<CapturedImage | null>(null);
+  const [pendingMedia, setPendingMedia] = useState<CapturedMedia | null>(null);
+  const [reportMedia, setReportMedia] = useState<CapturedMedia | null>(null);
   const [loading, setLoading] = useState(false);
   const [advancing, setAdvancing] = useState(false);
   const [duplicate, setDuplicate] = useState<{ issue: Issue; reason: string } | null>(null);
   const [dupBusy, setDupBusy] = useState(false);
 
-  // voice
+  // voice — English-only for now
   const [listening, setListening] = useState(false);
-  const [speechLang, setSpeechLang] = useState("hi-IN");
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
 
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+  const deviceInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages, duplicate]);
 
-  async function onPickPhoto(e: React.ChangeEvent<HTMLInputElement>) {
+  async function onPickMedia(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
     try {
-      setPendingImage(await fileToCapturedImage(file));
+      setPendingMedia(await fileToCapturedMedia(file));
     } catch {
       /* ignore unreadable file */
     }
@@ -120,7 +121,7 @@ export function TriageChat({
       return;
     }
     const rec = new ctor();
-    rec.lang = speechLang;
+    rec.lang = "en-IN";
     rec.interimResults = false;
     rec.continuous = false;
     rec.onresult = (e) => {
@@ -136,18 +137,25 @@ export function TriageChat({
 
   async function send() {
     const text = input.trim();
-    const img = pendingImage;
-    if (!text && !img) return;
+    const media = pendingMedia;
+    if (!text && !media) return;
 
-    const photoForReport = img ?? reportPhoto;
+    const mediaForReport = media ?? reportMedia;
     setMessages((m) => [
       ...m,
-      { id: uid(), role: "user", text, imagePreview: img?.preview },
+      { id: uid(), role: "user", text, media: media ? { kind: media.kind, preview: media.preview } : undefined },
     ]);
-    if (img) setReportPhoto(img);
+    if (media) setReportMedia(media);
     setInput("");
-    setPendingImage(null);
+    setPendingMedia(null);
     setLoading(true);
+
+    // Videos aren't analyzed by Gemini — note their presence in the text so the
+    // agent stops asking for media and treats it as visual evidence supplied.
+    const isVideo = media?.kind === "video";
+    const outgoingText = isVideo
+      ? `${text ? text + "\n\n" : ""}[Attached a video of the issue. Video can't be analyzed yet — treat it as visual evidence provided.]`
+      : text;
 
     const reqHistory = history;
     try {
@@ -156,9 +164,9 @@ export function TriageChat({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           history: reqHistory,
-          message: text,
-          imageBase64: img?.base64,
-          mimeType: img?.mimeType,
+          message: outgoingText,
+          imageBase64: media?.kind === "image" ? media.base64 : undefined,
+          mimeType: media?.kind === "image" ? media.mimeType : undefined,
         }),
       });
       const data = await res.json();
@@ -169,7 +177,7 @@ export function TriageChat({
       const toolCalls: ChatMessage["tools"] = data.toolCalls ?? [];
       setHistory((h) => [
         ...h,
-        { role: "user", text },
+        { role: "user", text: outgoingText },
         { role: "model", text: data.text || "" },
       ]);
       setMessages((m) => [
@@ -183,7 +191,7 @@ export function TriageChat({
         const delayMs = (toolCalls?.length ?? 0) * 600 + 1100;
         if (fa.name === "finalize_report") {
           setAdvancing(true);
-          window.setTimeout(() => onFinalized(fa.args as unknown as ReportDraft, photoForReport), delayMs);
+          window.setTimeout(() => onFinalized(fa.args as unknown as ReportDraft, mediaForReport), delayMs);
         } else if (fa.name === "flag_possible_duplicate") {
           const issue = await getIssueById(String(fa.args.issueId));
           if (issue) {
@@ -211,8 +219,9 @@ export function TriageChat({
     setDupBusy(true);
     try {
       let photoUrl: string | undefined;
-      if (reportPhoto) {
-        const blob = base64ToBlob(reportPhoto.base64, reportPhoto.mimeType);
+      // Only images strengthen an existing report as evidence; videos aren't analyzed.
+      if (reportMedia?.kind === "image" && reportMedia.base64) {
+        const blob = base64ToBlob(reportMedia.base64, reportMedia.mimeType);
         photoUrl = await uploadIssuePhoto(blob, duplicate.issue.id);
         await addIssuePhoto(duplicate.issue.id, photoUrl);
       }
@@ -256,7 +265,7 @@ export function TriageChat({
             issue={duplicate.issue}
             reason={duplicate.reason}
             busy={dupBusy}
-            hasPhoto={!!reportPhoto}
+            hasPhoto={reportMedia?.kind === "image"}
             onAddEvidence={addPhotoAsEvidence}
             onView={() => router.push(`/issue/${duplicate.issue.id}`)}
           />
@@ -272,56 +281,54 @@ export function TriageChat({
       {/* compose bar */}
       {!duplicate && !advancing && (
         <div className="border-t border-slate-100 bg-surface px-3 pb-4 pt-2">
-          {pendingImage && (
+          {pendingMedia && (
             <div className="mb-2 flex items-center gap-2">
-              <div className="relative h-14 w-14 overflow-hidden rounded-lg">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={pendingImage.preview} alt="attached" className="h-full w-full object-cover" />
+              <div className="relative h-14 w-14 overflow-hidden rounded-lg bg-slate-100">
+                {pendingMedia.kind === "video" ? (
+                  <video src={pendingMedia.preview} className="h-full w-full object-cover" muted />
+                ) : (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={pendingMedia.preview} alt="attached" className="h-full w-full object-cover" />
+                )}
               </div>
               <button
-                onClick={() => setPendingImage(null)}
+                onClick={() => setPendingMedia(null)}
                 className="text-xs font-medium text-muted underline"
               >
-                Remove photo
+                Remove {pendingMedia.kind}
               </button>
             </div>
           )}
 
           <div className="flex items-end gap-1.5">
+            {/* Camera capture — photos only (analyzed by the agent). */}
             <input
-              ref={fileInputRef}
+              ref={cameraInputRef}
               type="file"
               accept="image/*"
               capture="environment"
-              onChange={onPickPhoto}
+              onChange={onPickMedia}
               className="hidden"
             />
-            <IconButton label="Add photo" onClick={() => fileInputRef.current?.click()}>
+            {/* Device picker — photo or video. */}
+            <input
+              ref={deviceInputRef}
+              type="file"
+              accept="image/*,video/*"
+              onChange={onPickMedia}
+              className="hidden"
+            />
+            <IconButton label="Take photo" onClick={() => cameraInputRef.current?.click()}>
               <Camera size={20} />
             </IconButton>
 
-            <div className="flex flex-col items-center">
-              <IconButton
-                label="Voice input"
-                onClick={toggleMic}
-                active={listening}
-              >
-                <Mic size={20} />
-              </IconButton>
-              <div className="mt-0.5 flex gap-0.5">
-                {(["hi-IN", "en-IN"] as const).map((l) => (
-                  <button
-                    key={l}
-                    onClick={() => setSpeechLang(l)}
-                    className={`rounded px-1 text-[9px] font-bold ${
-                      speechLang === l ? "text-primary" : "text-muted"
-                    }`}
-                  >
-                    {l === "hi-IN" ? "हिं" : "EN"}
-                  </button>
-                ))}
-              </div>
-            </div>
+            <IconButton label="Upload photo or video" onClick={() => deviceInputRef.current?.click()}>
+              <ImagePlus size={20} />
+            </IconButton>
+
+            <IconButton label="Voice input" onClick={toggleMic} active={listening}>
+              <Mic size={20} />
+            </IconButton>
 
             <textarea
               value={input}
@@ -339,7 +346,7 @@ export function TriageChat({
 
             <button
               onClick={send}
-              disabled={loading || (!input.trim() && !pendingImage)}
+              disabled={loading || (!input.trim() && !pendingMedia)}
               aria-label="Send"
               className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary text-white transition active:scale-95 disabled:opacity-40"
             >
@@ -403,10 +410,14 @@ function MessageBubble({ message }: { message: ChatMessage }) {
             : "rounded-bl-md bg-surface text-foreground shadow-card"
         }`}
       >
-        {message.imagePreview && (
+        {message.media && (
           <div className="mb-2 overflow-hidden rounded-lg">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={message.imagePreview} alt="report photo" className="max-h-48 w-full object-cover" />
+            {message.media.kind === "video" ? (
+              <video src={message.media.preview} controls className="max-h-48 w-full object-cover" />
+            ) : (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={message.media.preview} alt="report photo" className="max-h-48 w-full object-cover" />
+            )}
           </div>
         )}
 

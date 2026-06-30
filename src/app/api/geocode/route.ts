@@ -45,11 +45,20 @@ export async function GET(request: Request) {
       pick("administrative_area_level_2") ??
       null;
 
+    // City-level name (one rung up from the ward) for the city model.
+    const city =
+      pick("locality") ??
+      pick("postal_town") ??
+      pick("administrative_area_level_2") ??
+      pick("administrative_area_level_1") ??
+      null;
+
     return NextResponse.json({
       locality,
+      city,
       address: result.formatted_address ?? null,
     });
   } catch {
-    return NextResponse.json({ locality: null, address: null });
+    return NextResponse.json({ locality: null, city: null, address: null });
   }
 }

@@ -525,6 +525,18 @@ export async function uploadIssuePhoto(
   return getDownloadURL(r);
 }
 
+// Stores an attached video (never analyzed by Gemini). Content-type is taken
+// from the File; the .mp4 path suffix is cosmetic.
+export async function uploadIssueVideo(
+  file: Blob,
+  issueId: string,
+): Promise<string> {
+  const path = `issues/${issueId}/video-${Date.now()}.mp4`;
+  const r = ref(getFirebaseStorage(), path);
+  await uploadBytes(r, file);
+  return getDownloadURL(r);
+}
+
 // ─── Users ───────────────────────────────────────────────────────────────────
 
 export async function createOrUpdateUser(user: User): Promise<void> {

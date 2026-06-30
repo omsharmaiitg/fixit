@@ -16,6 +16,7 @@ import { LocationPicker } from "@/components/LocationPicker";
 import {
   createIssue,
   uploadIssuePhoto,
+  uploadIssueVideo,
   getSeverityLabel,
 } from "@/lib/firebaseHelpers";
 import {
@@ -33,14 +34,9 @@ import {
   CATEGORY_BASE_WEIGHT,
   SEVERITY_COLORS,
 } from "@/lib/constants";
+import type { Issue, IssueCategory, TimeOfDay } from "@/types";
 import type {
-  Issue,
-  IssueCategory,
-  Language,
-  TimeOfDay,
-} from "@/types";
-import type {
-  CapturedImage,
+  CapturedMedia,
   ConfirmedLocation,
   ReportDraft,
 } from "@/components/report/reportTypes";
@@ -73,12 +69,6 @@ function normalizeCategory(raw: string): IssueCategory {
   return CATEGORY_ALIASES[key] ?? "other";
 }
 
-const VALID_LANGS: Language[] = ["en", "hi", "ta", "bn", "te", "mr"];
-function normalizeLanguage(raw?: string): Language {
-  const code = (raw ?? "en").slice(0, 2).toLowerCase() as Language;
-  return VALID_LANGS.includes(code) ? code : "en";
-}
-
 function timeOfDayNow(): TimeOfDay {
   const h = new Date().getHours();
   if (h < 5) return "night";
@@ -93,7 +83,7 @@ export default function ReportPage() {
   const { user } = useAuth();
   const [stage, setStage] = useState<Stage>("chat");
   const [draft, setDraft] = useState<ReportDraft | null>(null);
-  const [photo, setPhoto] = useState<CapturedImage | null>(null);
+  const [media, setMedia] = useState<CapturedMedia | null>(null);
   const [location, setLocation] = useState<ConfirmedLocation | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -104,9 +94,9 @@ export default function ReportPage() {
     else setStage("location");
   }
 
-  function handleFinalized(d: ReportDraft, p: CapturedImage | null) {
+  function handleFinalized(d: ReportDraft, m: CapturedMedia | null) {
     setDraft(d);
-    setPhoto(p);
+    setMedia(m);
     setLocation({ lat: d.lat, lng: d.lng, address: d.address ?? "" });
     setStage("location");
   }
@@ -123,10 +113,23 @@ export default function ReportPage() {
     try {
       const id = crypto.randomUUID();
       let photoUrls: string[] = [];
-      if (photo) {
-        const blob = base64ToBlob(photo.base64, photo.mimeType);
-        const url = await uploadIssuePhoto(blob, id);
-        photoUrls = [url];
+      let videoUrl: string | undefined;
+      if (media?.kind === "image" && media.base64) {
+        const blob = base64ToBlob(media.base64, media.mimeType);
+        photoUrls = [await uploadIssuePhoto(blob, id)];
+      } else if (media?.kind === "video" && media.file) {
+        // Stored & displayed, never sent to Gemini.
+        videoUrl = await uploadIssueVideo(media.file, id);
+      }
+
+      // Derive the issue's city from the confirmed (possibly pin-adjusted)
+      // location — more reliable than what the agent saw at geocode time.
+      let cityName: string | undefined;
+      try {
+        const r = await fetch(`/api/geocode?lat=${location.lat}&lng=${location.lng}`);
+        cityName = (await r.json()).city ?? undefined;
+      } catch {
+        /* non-fatal — issue just won't carry a city name */
       }
 
       const reportedAt = new Date();
@@ -143,13 +146,14 @@ export default function ReportPage() {
         id,
         title: title.trim() || draft.title,
         description: draft.description ?? draft.title,
-        descriptionEnglish: draft.descriptionEnglish,
         category,
         severity,
         status: "reported",
         agingStatus: "fresh",
         location: { lat: location.lat, lng: location.lng, address: location.address },
+        ...(cityName ? { cityName } : {}),
         photoUrls,
+        ...(videoUrl ? { videoUrl } : {}),
         reporterId,
         reporterName,
         coReporters: [],
@@ -180,7 +184,7 @@ export default function ReportPage() {
         discussion: [],
         adoptedBy: [],
         timeOfDayAtReport: timeOfDayNow(),
-        language: normalizeLanguage(draft.language),
+        language: "en", // English-only for now
         isOfflineQueued: typeof navigator !== "undefined" ? !navigator.onLine : false,
       };
 
@@ -232,7 +236,7 @@ export default function ReportPage() {
       {stage === "review" && draft && location && (
         <ReviewStage
           draft={draft}
-          photo={photo}
+          media={media}
           location={location}
           submitting={submitting}
           error={error}
@@ -306,14 +310,14 @@ function DraftSummary({ draft, onEdit }: { draft: ReportDraft; onEdit: () => voi
 
 function ReviewStage({
   draft,
-  photo,
+  media,
   location,
   submitting,
   error,
   onSubmit,
 }: {
   draft: ReportDraft;
-  photo: CapturedImage | null;
+  media: CapturedMedia | null;
   location: ConfirmedLocation;
   submitting: boolean;
   error: string | null;
@@ -331,11 +335,18 @@ function ReviewStage({
   return (
     <div className="flex flex-1 flex-col overflow-y-auto px-4 py-4">
       <div className="flex-1 space-y-4">
-        {/* photo */}
-        {photo ? (
+        {/* media */}
+        {media?.kind === "video" ? (
+          <div className="space-y-1.5">
+            <div className="overflow-hidden rounded-2xl">
+              <video src={media.preview} controls className="max-h-60 w-full object-cover" />
+            </div>
+            <p className="text-xs text-muted">🎥 Video attached — AI analysis coming soon.</p>
+          </div>
+        ) : media ? (
           <div className="overflow-hidden rounded-2xl">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={photo.preview} alt="report" className="max-h-60 w-full object-cover" />
+            <img src={media.preview} alt="report" className="max-h-60 w-full object-cover" />
           </div>
         ) : (
           <div className="flex h-32 items-center justify-center rounded-2xl bg-gradient-to-br from-primary/10 to-primary/5 text-5xl">

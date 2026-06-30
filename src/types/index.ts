@@ -112,7 +112,9 @@ export interface Issue {
   agingStatus: AgingStatus;
 
   location: Location;
+  cityName?: string; // city/locality derived from the geocoded location at report time
   photoUrls: string[];
+  videoUrl?: string; // optional attached video — stored/displayed, NOT AI-analyzed
 
   // Generic reporter identity. Holds the anonymous per-device id today (see
   // @/lib/reporter) and can hold a Firebase auth.uid later with no schema change.
@@ -188,6 +190,10 @@ export interface User {
   squadId?: string;
   adoptedIssues: string[];
   preferredLanguage: Language;
+  // Chosen city center — scopes the home feed (65km radius). Mirrored to a cookie.
+  cityName?: string;
+  cityLat?: number;
+  cityLng?: number;
   createdAt: Date;
 }
 
