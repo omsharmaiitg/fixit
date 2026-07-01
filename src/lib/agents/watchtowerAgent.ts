@@ -126,7 +126,13 @@ export async function runWatchtower(
   const today = new Date().toISOString().slice(0, 10);
 
   for (const cityName of targetCities) {
-    const cityIssues = issues.filter((i) => i.cityName === cityName);
+    // Normalized match: same citySlug() the reader (getLatestReport) uses, so a
+    // report written here is findable despite casing/suffix drift ("Shamli" vs
+    // "Shamli, Uttar Pradesh"). citySlug(null/undefined) yields "unknown", which
+    // won't match a real city — so cityName-less legacy issues are cleanly
+    // excluded (correct: untagged issues don't belong to any city's report).
+    const want = citySlug(cityName);
+    const cityIssues = issues.filter((i) => citySlug(i.cityName) === want);
     if (cityIssues.length === 0) continue; // empty city → no borrowed data
 
     // (c) Predict up to 3 hotspots from this city's 30-day corpus.
