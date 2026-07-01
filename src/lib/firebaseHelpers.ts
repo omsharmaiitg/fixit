@@ -37,6 +37,7 @@ import type {
   Squad,
   User,
 } from "@/types";
+import { citySlug } from "@/lib/city";
 
 export { getAgingStatus };
 
@@ -165,7 +166,12 @@ export async function getLatestReport(
   let reports = snap.docs.map(
     (d) => tsToDate({ ...d.data(), id: d.id }) as WeeklyCivicReport,
   );
-  if (cityName) reports = reports.filter((r) => r.cityName === cityName);
+  // Normalized match: compare on the SAME citySlug the writer keys the doc id by,
+  // so casing/suffix drift ("Shamli" vs "shamli") can't hide a city's report.
+  if (cityName) {
+    const want = citySlug(cityName);
+    reports = reports.filter((r) => citySlug(r.cityName) === want);
+  }
   if (reports.length === 0) return null;
   reports.sort(
     (a, b) => (b.generatedAt?.getTime() ?? 0) - (a.generatedAt?.getTime() ?? 0),

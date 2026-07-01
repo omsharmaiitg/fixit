@@ -94,7 +94,7 @@ export default function AdminPage() {
       const r = await seedDemoIntelligence();
       setSeedIntel({
         running: false,
-        message: `🌱 Seeded ${r.hotspots} hotspots + 1 weekly report. Open the dashboard to see them.`,
+        message: `🌱 Seeded ${r.hotspots} hotspots. Run the Watchtower to generate the per-city weekly report.`,
       });
     } catch (e) {
       setSeedIntel({ running: false, message: `Error: ${(e as Error).message}` });

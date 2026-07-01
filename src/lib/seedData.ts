@@ -207,11 +207,13 @@ export async function seedDemoData(): Promise<{ seeded: boolean; count: number }
   return { seeded: true, count: issues.length };
 }
 
-// Sample "intelligence" the Watchtower normally writes (hotspots + weekly
-// report), so the dashboard demos well without a live run. Doc shapes mirror
-// watchtowerAgent.ts exactly: hotspot id = `hotspot_<lat>_<lng>`, report id =
-// `report-<date>` with generatedAt=now so it's the latest. setDoc(merge) keeps
-// it idempotent and a real "Run Watchtower Now" later overwrites it.
+// Sample "intelligence" the Watchtower normally writes (hotspots), so the
+// dashboard demos well without a live run. Doc shape mirrors watchtowerAgent.ts:
+// hotspot id = `hotspot_<lat>_<lng>`. setDoc(merge) keeps it idempotent and a
+// real "Run Watchtower Now" later overwrites it. No demo weekly report is
+// seeded: the dashboard read scopes reports by citySlug(cityName), and this
+// legacy report carried no cityName so it was never findable — the Watchtower
+// run writes the real per-city report.
 const DEMO_HOTSPOTS = [
   {
     lat: 28.632,
@@ -233,21 +235,7 @@ const DEMO_HOTSPOTS = [
   },
 ];
 
-const DEMO_REPORT = {
-  glance:
-    "15 issues on the public record this week — most still open, with road damage and public-safety hazards leading the board.",
-  highlight:
-    "A leaning tree blocking a DLF Phase 3 road was reported, fixed, and community-confirmed — the loop closed end to end.",
-  theShame:
-    "Exposed electrical wiring near Connaught Place has sat acknowledged-but-untouched for 19 days, in a rain-prone, high-footfall block.",
-  topContributor:
-    "Anil P. filed the most reports this week, including the CP wiring hazard — the kind of vigilance this ward runs on.",
-  nextWeekWatch:
-    "The Connaught Place road-damage cluster and Bhajanpura drainage are the two areas most likely to throw up a new issue.",
-  verdict: "The neighbourhood is watching. Now it needs the authority to move.",
-};
-
-export async function seedDemoIntelligence(): Promise<{ hotspots: number; report: boolean }> {
+export async function seedDemoIntelligence(): Promise<{ hotspots: number }> {
   const batch = writeBatch(getDb());
 
   for (const h of DEMO_HOTSPOTS) {
@@ -259,15 +247,8 @@ export async function seedDemoIntelligence(): Promise<{ hotspots: number; report
     );
   }
 
-  const reportId = `report-${new Date(now).toISOString().slice(0, 10)}`;
-  batch.set(
-    doc(getDb(), "reports", reportId),
-    stripUndefined({ ...DEMO_REPORT, generatedAt: new Date(now) }),
-    { merge: true },
-  );
-
   await batch.commit();
-  return { hotspots: DEMO_HOTSPOTS.length, report: true };
+  return { hotspots: DEMO_HOTSPOTS.length };
 }
 
 // ─── Shamli demo data ────────────────────────────────────────────────────────

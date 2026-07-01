@@ -20,6 +20,14 @@ export function isNamedCity(name?: string | null): name is string {
   return !!name && name.trim() !== "" && name !== UNRESOLVED_CITY_NAME;
 }
 
+// Stable, filesystem-safe key for a city name. The single source of truth for
+// city identity used by BOTH the Watchtower report writer (doc id) and the
+// dashboard reader (filter) — keep it here so they can never drift and a report
+// stays findable across casing/suffix variations ("Shamli" vs "shamli").
+export const citySlug = (name?: string | null) =>
+  (name ?? "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") ||
+  "unknown";
+
 const COOKIE = "fixit_city";
 const ONE_YEAR_SECONDS = 60 * 60 * 24 * 365;
 

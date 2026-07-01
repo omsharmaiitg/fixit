@@ -13,6 +13,7 @@ import {
   saveProblemZones,
 } from "@/lib/problemZones";
 import { CATEGORY_LABELS } from "@/lib/constants";
+import { citySlug } from "@/lib/city";
 import type { EscalationMemo, Issue, IssueCategory, PredictedHotspot } from "@/types";
 
 export interface WatchtowerSummary {
@@ -36,11 +37,6 @@ const asCategory = (raw: string): IssueCategory => {
 const ESCALATION_PRESSURE = 70;
 const ESCALATION_MIN_AGE_DAYS = 7;
 const MAX_ESCALATIONS = 5; // cap Gemini work per run
-
-// Stable, filesystem-safe key from a city name (for per-city doc ids).
-const citySlug = (name: string) =>
-  name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") ||
-  "unknown";
 
 function distinctCityNames(issues: Issue[]): string[] {
   const set = new Set<string>();
