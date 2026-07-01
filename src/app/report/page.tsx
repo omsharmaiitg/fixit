@@ -28,6 +28,7 @@ import { base64ToBlob } from "@/lib/imageUtils";
 import { getReporterId } from "@/lib/reporter";
 import { recomputeUserGamification } from "@/lib/gamification";
 import { useAuth } from "@/contexts/AuthContext";
+import { useLocationContext } from "@/contexts/LocationContext";
 import {
   CATEGORY_LABELS,
   CATEGORY_EMOJIS,
@@ -81,6 +82,7 @@ function timeOfDayNow(): TimeOfDay {
 export default function ReportPage() {
   const router = useRouter();
   const { user } = useAuth();
+  const { gpsLat, gpsLng, homeCity } = useLocationContext();
   const [stage, setStage] = useState<Stage>("chat");
   const [draft, setDraft] = useState<ReportDraft | null>(null);
   const [media, setMedia] = useState<CapturedMedia | null>(null);
@@ -97,7 +99,9 @@ export default function ReportPage() {
   function handleFinalized(d: ReportDraft, m: CapturedMedia | null) {
     setDraft(d);
     setMedia(m);
-    setLocation({ lat: d.lat, lng: d.lng, address: d.address ?? "" });
+    // No coords → geocoding was unavailable; user will drop a pin on the map next.
+    const hasCoords = Number.isFinite(d.lat) && Number.isFinite(d.lng);
+    setLocation(hasCoords ? { lat: d.lat, lng: d.lng, address: d.address ?? "" } : null);
     setStage("location");
   }
 
@@ -225,9 +229,12 @@ export default function ReportPage() {
             Confirm where this is
           </p>
           <LocationPicker
-            initialLat={draft.lat}
-            initialLng={draft.lng}
-            initialAddress={draft.address}
+            // Agent coords when it had them; otherwise centre on the user's GPS/home
+            // city (geocoding was down) so the pin starts somewhere sensible.
+            // ponytail: Delhi as last-resort centre if GPS and home city are both unknown.
+            initialLat={Number.isFinite(draft.lat) ? draft.lat : gpsLat ?? homeCity?.cityLat ?? 28.6139}
+            initialLng={Number.isFinite(draft.lng) ? draft.lng : gpsLng ?? homeCity?.cityLng ?? 77.209}
+            initialAddress={Number.isFinite(draft.lat) ? draft.address : undefined}
             onConfirm={handleLocationConfirmed}
           />
         </div>
