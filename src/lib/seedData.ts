@@ -2,6 +2,7 @@ import {
   collection,
   doc,
   getCountFromServer,
+  getDocs,
   query,
   where,
   writeBatch,
@@ -300,9 +301,12 @@ const SHAMLI_REPORTERS = {
   u8: { id: "seed-user-08", name: "Pooja Rani" },
 } as const;
 
-// Build a LoremFlickr locked URL: category-relevant keywords + stable lock id.
-const flickr = (keywords: string, lock: number) =>
-  `https://loremflickr.com/800/600/${keywords}/${lock}`;
+// Build a stable mock photo URL. LoremFlickr was dropped — its keyword+lock
+// URLs now 404, which next/image hard-fails on. Picsum serves a real image for
+// any seed string; the lock id keeps each issue's photo stable across reseeds.
+// `keywords` is retained only to document what each photo depicts.
+const mockPhoto = (keywords: string, lock: number) =>
+  `https://picsum.photos/seed/shamli-${lock}/800/600`;
 
 type ShamliSeed = {
   title: string;
@@ -351,7 +355,7 @@ const SHAMLI_SEEDS: ShamliSeed[] = [
     reporter: R.u1,
     upvoters: [R.u2.id, R.u3.id, R.u4.id, R.u5.id, "seed-voter-11", "seed-voter-12", "seed-voter-13"],
     nearbyUpvotes: 3,
-    photo: flickr("pothole,road", 101),
+    photo: mockPhoto("pothole,road", 101),
   },
   {
     title: "Open drain overflowing near Anaj Mandi",
@@ -370,7 +374,7 @@ const SHAMLI_SEEDS: ShamliSeed[] = [
     reporter: R.u2,
     upvoters: [R.u3.id, "seed-voter-21"],
     nearbyUpvotes: 1,
-    photo: flickr("drain,sewage", 102),
+    photo: mockPhoto("drain,sewage", 102),
   },
   {
     title: "Streetlights dead near Railway Station",
@@ -389,7 +393,7 @@ const SHAMLI_SEEDS: ShamliSeed[] = [
     reporter: R.u3,
     upvoters: [R.u1.id, R.u4.id, R.u5.id, "seed-voter-31"],
     nearbyUpvotes: 2,
-    photo: flickr("streetlight,night", 103),
+    photo: mockPhoto("streetlight,night", 103),
   },
   {
     title: "Garbage pile-up near Bus Stand",
@@ -407,7 +411,7 @@ const SHAMLI_SEEDS: ShamliSeed[] = [
     reporter: R.u4,
     upvoters: [R.u1.id, R.u2.id, R.u5.id, R.u6.id, "seed-voter-41", "seed-voter-42"],
     nearbyUpvotes: 3,
-    photo: flickr("garbage,trash", 104),
+    photo: mockPhoto("garbage,trash", 104),
   },
   {
     title: "Exposed electrical wiring near Government Hospital",
@@ -425,7 +429,7 @@ const SHAMLI_SEEDS: ShamliSeed[] = [
     reporter: R.u5,
     upvoters: [R.u6.id, "seed-voter-51", "seed-voter-52"],
     nearbyUpvotes: 1,
-    photo: flickr("electrical,wires", 105),
+    photo: mockPhoto("electrical,wires", 105),
   },
   {
     title: "Burst water pipeline on Kairana Road",
@@ -444,7 +448,7 @@ const SHAMLI_SEEDS: ShamliSeed[] = [
     reporter: R.u6,
     upvoters: [R.u1.id, R.u3.id, R.u7.id, R.u8.id, "seed-voter-61", "seed-voter-62", "seed-voter-63", "seed-voter-64"],
     nearbyUpvotes: 4,
-    photo: flickr("water,pipe,leak", 106),
+    photo: mockPhoto("water,pipe,leak", 106),
   },
   {
     title: "Broken road near Tehsil office",
@@ -462,7 +466,7 @@ const SHAMLI_SEEDS: ShamliSeed[] = [
     reporter: R.u7,
     upvoters: [R.u1.id, R.u2.id, R.u8.id, "seed-voter-71", "seed-voter-72"],
     nearbyUpvotes: 2,
-    photo: flickr("broken,road", 107),
+    photo: mockPhoto("broken,road", 107),
   },
   {
     title: "Fallen tree blocking lane in Adarsh Colony",
@@ -480,7 +484,7 @@ const SHAMLI_SEEDS: ShamliSeed[] = [
     reporter: R.u8,
     upvoters: ["seed-voter-81"],
     nearbyUpvotes: 0,
-    photo: flickr("fallen,tree", 108),
+    photo: mockPhoto("fallen,tree", 108),
   },
   {
     title: "Waterlogging near Subhash Chowk",
@@ -499,7 +503,7 @@ const SHAMLI_SEEDS: ShamliSeed[] = [
     reporter: R.u1,
     upvoters: [R.u2.id, R.u3.id, R.u6.id, R.u7.id, "seed-voter-91", "seed-voter-92", "seed-voter-93", "seed-voter-94", "seed-voter-95"],
     nearbyUpvotes: 4,
-    photo: flickr("flood,water", 109),
+    photo: mockPhoto("flood,water", 109),
   },
   {
     title: "Overflowing dustbins in main market",
@@ -517,8 +521,8 @@ const SHAMLI_SEEDS: ShamliSeed[] = [
     reporter: R.u2,
     upvoters: [R.u1.id, R.u4.id, R.u7.id, "seed-voter-101", "seed-voter-102"],
     nearbyUpvotes: 2,
-    photo: flickr("dustbin,trash", 110),
-    resolutionPhotoUrl: flickr("clean,street", 210),
+    photo: mockPhoto("dustbin,trash", 110),
+    resolutionPhotoUrl: mockPhoto("clean,street", 210),
     resolutionGeminiVerdict:
       "The after-photo shows the bins emptied and the surrounding area cleared — consistent with the reported issue being resolved.",
     resolveConfirmBy: [R.u4.id, R.u7.id, "seed-voter-101"],
@@ -581,21 +585,20 @@ function buildShamliIssue(s: ShamliSeed): Issue {
   return base;
 }
 
-// Idempotent: skips only if THIS mock batch was already seeded (keyed on
-// seedBatch, not cityName), so repeated taps don't duplicate the demo set while
-// real Shamli reports never trip the guard. stripUndefined drops any optional
-// fields left unset before writing (Firestore rejects `undefined`).
+// Replace-and-reseed: clears any existing docs from THIS mock batch (keyed on
+// seedBatch, not cityName, so real Shamli reports are never touched) then writes
+// a fresh set. Re-tapping refreshes rather than duplicates — and crucially, this
+// overwrites older seeded docs that held now-dead LoremFlickr photo URLs.
+// stripUndefined drops any optional fields left unset (Firestore rejects `undefined`).
 export async function seedShamliData(): Promise<{ seeded: boolean; count: number }> {
-  const existing = await getCountFromServer(
+  const stale = await getDocs(
     query(collection(getDb(), "issues"), where("seedBatch", "==", SHAMLI_SEED_BATCH)),
   );
-  if (existing.data().count > 0) {
-    return { seeded: false, count: existing.data().count };
-  }
 
   const issues = SHAMLI_SEEDS.map(buildShamliIssue);
 
   const batch = writeBatch(getDb());
+  for (const d of stale.docs) batch.delete(d.ref);
   for (const issue of issues) {
     const { id, ...rest } = issue;
     batch.set(doc(getDb(), "issues", id), stripUndefined({ ...rest, seedBatch: SHAMLI_SEED_BATCH }));
