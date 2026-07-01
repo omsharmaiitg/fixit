@@ -24,19 +24,33 @@ const geocodeLocation: AgentTool = {
   run: async (args) => {
     const query = String(args.query ?? '');
     const key = process.env.GOOGLE_GEOCODING_KEY;
-    if (!key) return { error: 'geocoding key not configured' };
+    // No key = infra not addressable → treat as unavailable, route to the map pin.
+    if (!key) return { found: false, unavailable: true, status: 'NO_KEY' };
     const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(query)}&region=in&key=${key}`;
-    const res = await fetch(url);
-    const data = await res.json();
+    let data: { status?: string; error_message?: string; results?: Array<{ geometry: { location: { lat: number; lng: number } }; formatted_address: string }> };
+    try {
+      const res = await fetch(url);
+      data = await res.json();
+    } catch {
+      // Network/parse failure talking to Google — an API error, not a bad address.
+      return { found: false, unavailable: true, status: 'FETCH_FAILED' };
+    }
     console.error('[geocode]', data.status, data.error_message);
     const top = data.results?.[0];
-    if (!top) return { found: false };
-    return {
-      found: true,
-      lat: top.geometry.location.lat,
-      lng: top.geometry.location.lng,
-      address: top.formatted_address,
-    };
+    if (data.status === 'OK' && top) {
+      return {
+        found: true,
+        lat: top.geometry.location.lat,
+        lng: top.geometry.location.lng,
+        address: top.formatted_address,
+      };
+    }
+    // A genuine "no match for this address" — the address text is the problem.
+    if (data.status === 'ZERO_RESULTS') return { found: false };
+    // Anything else (OVER_QUERY_LIMIT, REQUEST_DENIED, INVALID_REQUEST, quota/
+    // billing) is an API/infra error, NOT a bad address. Signal the agent to
+    // stop asking for addresses and hand off to the map pin instead.
+    return { found: false, unavailable: true, status: data.status ?? 'UNKNOWN' };
   },
 };
 
@@ -152,7 +166,7 @@ const finalizeReport: AgentTool = {
   declaration: {
     name: 'finalize_report',
     description:
-      'Call when you have enough to log a NEW issue: an issue type and a usable location. Returns the draft to the user for confirmation. Do NOT call if a strong duplicate exists — use flag_possible_duplicate instead.',
+      'Call when you have enough to log a NEW issue: an issue type and a usable location. Returns the draft to the user for confirmation. Do NOT call if a strong duplicate exists — use flag_possible_duplicate instead. If geocode_location reported that address lookup is unavailable, OMIT lat/lng — the user will drop a pin on the map to set the exact spot.',
     parametersJsonSchema: {
       type: 'object',
       properties: {
@@ -167,7 +181,8 @@ const finalizeReport: AgentTool = {
         lng: { type: 'number' },
         address: { type: 'string' },
       },
-      required: ['category', 'severity', 'title', 'lat', 'lng'],
+      // lat/lng are omitted when geocoding is unavailable — the user pins the spot on the map.
+      required: ['category', 'severity', 'title'],
     },
   },
   run: async (args) => ({ ok: true, draft: args }), // no DB write — client confirms first
