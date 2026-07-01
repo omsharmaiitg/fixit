@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { setOptions, importLibrary } from "@googlemaps/js-api-loader";
-import { MapPin, Check, Search } from "lucide-react";
+import { MapPin, Check } from "lucide-react";
 
 // Public, HTTP-referrer-restricted browser key — safe to ship in the bundle.
 // Hardcoded fallback because Cloud Build doesn't inject NEXT_PUBLIC_* vars.
@@ -33,7 +33,6 @@ export function LocationPicker({
   onConfirm: (lat: number, lng: number, address: string) => void;
 }) {
   const mapDivRef = useRef<HTMLDivElement>(null);
-  const searchInputRef = useRef<HTMLInputElement>(null);
   const markerRef = useRef<google.maps.Marker | null>(null);
 
   const [coords, setCoords] = useState({ lat: initialLat, lng: initialLng });
@@ -50,15 +49,16 @@ export function LocationPicker({
         setOptions({ key: BROWSER_KEY });
         const { Map } = await importLibrary("maps");
         const { Marker } = await importLibrary("marker");
-        const { Autocomplete } = await importLibrary("places");
         if (cancelled || !mapDivRef.current) return;
 
         const center = { lat: initialLat, lng: initialLng };
         const map = new Map(mapDivRef.current, {
           center,
           zoom: 16,
+          // Show the +/- zoom buttons; keep the rest of the default chrome off.
           disableDefaultUI: true,
-          gestureHandling: "greedy",
+          zoomControl: true,
+          gestureHandling: "greedy", // pinch/scroll zoom without ctrl/two-finger
           clickableIcons: false,
         });
 
@@ -82,25 +82,6 @@ export function LocationPicker({
           applyPosition(e.latLng.lat(), e.latLng.lng());
         });
 
-        // Places Autocomplete.
-        if (searchInputRef.current) {
-          const ac = new Autocomplete(searchInputRef.current, {
-            fields: ["geometry", "formatted_address"],
-          });
-          ac.addListener("place_changed", () => {
-            const place = ac.getPlace();
-            const loc = place.geometry?.location;
-            if (!loc) return;
-            const lat = loc.lat();
-            const lng = loc.lng();
-            map.panTo(loc);
-            map.setZoom(17);
-            marker.setPosition(loc);
-            setCoords({ lat, lng });
-            setAddress(place.formatted_address ?? `${lat.toFixed(5)}, ${lng.toFixed(5)}`);
-          });
-        }
-
         setMapReady(true);
         // Seed the address if the agent didn't give us one.
         if (!initialAddress) applyPosition(initialLat, initialLng);
@@ -118,20 +99,6 @@ export function LocationPicker({
 
   return (
     <div className="space-y-3">
-      {/* search */}
-      <div className="relative">
-        <Search
-          size={16}
-          className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted"
-        />
-        <input
-          ref={searchInputRef}
-          placeholder="Search a place or landmark"
-          disabled={mapFailed}
-          className="w-full rounded-xl border border-slate-200 bg-surface py-2.5 pl-9 pr-3 text-sm outline-none placeholder:text-muted focus:border-primary disabled:opacity-50"
-        />
-      </div>
-
       {/* map or fallback */}
       {mapFailed ? (
         <div className="flex h-[180px] flex-col items-center justify-center rounded-2xl bg-slate-100 px-6 text-center">
