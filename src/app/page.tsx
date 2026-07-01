@@ -175,18 +175,38 @@ export default function HomePage() {
   }, [scoped, tab, sortLat, sortLng]);
 
   // Greeting subtitle:
-  //  • Live GPS in the home city → the user's real resolved area ("Area, State"),
-  //    never left blank once GPS succeeded (falls back through home/active city).
-  //  • Exploring, or a fallback/guest-picked city → "Viewing {city}", not "Near you".
-  // Always resolves to a concrete name — never stale or empty.
-  const lastResortCity = activeCity?.cityName ?? homeCity?.cityName ?? null;
+  //  • Live GPS in the home city → the user's EXACT reverse-geocoded area
+  //    ("Area, State" or the locality), reusing the cached result. Never the
+  //    literal "Your area" placeholder once GPS succeeded — if the geocoder
+  //    couldn't name it, we derive the area from the issues actually in range.
+  //  • Exploring, or a fallback/guest-picked city → "Viewing {city}".
+  //  • Genuinely no location → a neutral fallback.
+  const PLACEHOLDER = "Your area";
+  const cityFromModel =
+    (activeCity?.cityName && activeCity.cityName !== PLACEHOLDER
+      ? activeCity.cityName
+      : null) ??
+    (homeCity?.cityName && homeCity.cityName !== PLACEHOLDER ? homeCity.cityName : null);
+  // Most common real cityName among the issues in range (e.g. "Shamli") — used
+  // only when the model/geocoder gave us nothing better than the placeholder.
+  const derivedArea = useMemo(() => {
+    const tally = new Map<string, number>();
+    for (const i of scoped) {
+      const n = i.cityName?.trim();
+      if (n && n !== PLACEHOLDER) tally.set(n, (tally.get(n) ?? 0) + 1);
+    }
+    return [...tally.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+  }, [scoped]);
+
   let locationLabel: string;
   if (locationSource === "gps" && !isExploring) {
-    locationLabel = !ward.resolved
-      ? "Pinpointing your area…"
-      : ward.value ?? lastResortCity ?? "Your area";
-  } else if (lastResortCity) {
-    locationLabel = `Viewing ${lastResortCity}`;
+    if (!ward.resolved) {
+      locationLabel = "Pinpointing your area…";
+    } else {
+      locationLabel = ward.value ?? cityFromModel ?? derivedArea ?? "Near you";
+    }
+  } else if (cityFromModel ?? derivedArea) {
+    locationLabel = `Viewing ${cityFromModel ?? derivedArea}`;
   } else {
     locationLabel = "Choose your city";
   }
