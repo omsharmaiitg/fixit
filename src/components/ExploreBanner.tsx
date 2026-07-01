@@ -6,6 +6,7 @@
 
 import { ArrowLeftRight } from "lucide-react";
 import { useLocationContext } from "@/contexts/LocationContext";
+import { isNamedCity } from "@/lib/city";
 
 export function ExploreBanner() {
   const { isExploring, activeCity, homeCity, resetToHome } = useLocationContext();
@@ -22,7 +23,7 @@ export function ExploreBanner() {
         className="inline-flex shrink-0 items-center gap-1 rounded-full bg-primary px-2.5 py-1 text-[11px] font-semibold text-white transition active:scale-95"
       >
         <ArrowLeftRight size={12} strokeWidth={2.4} />
-        {homeCity ? homeCity.cityName : "Your city"}
+        {isNamedCity(homeCity?.cityName) ? homeCity!.cityName : "Your city"}
       </button>
     </div>
   );

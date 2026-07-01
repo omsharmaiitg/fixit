@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { setOptions, importLibrary } from "@googlemaps/js-api-loader";
-import type { City } from "@/lib/city";
+import { isNamedCity, type City } from "@/lib/city";
 
 // Public, HTTP-referrer-restricted browser key — same one LocationPicker uses.
 const BROWSER_KEY =
@@ -36,7 +36,13 @@ export function CityPicker({
 
         el = new PlaceAutocompleteElement({ includedPrimaryTypes: ["(cities)"] });
         el.style.width = "100%";
-        if (initialName) el.value = initialName;
+        // Real, empty-friendly placeholder — never inherit a location sentinel.
+        try {
+          (el as unknown as { placeholder?: string }).placeholder = "Search a city…";
+        } catch {
+          /* older element versions may not expose placeholder — non-fatal */
+        }
+        if (initialName && isNamedCity(initialName)) el.value = initialName;
         hostRef.current.appendChild(el);
 
         el.addEventListener("gmp-select", async (event) => {

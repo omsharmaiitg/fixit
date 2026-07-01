@@ -9,6 +9,17 @@ export interface City {
   cityLng: number;
 }
 
+// Internal sentinel for a GPS fix we couldn't reverse-geocode into a real place
+// name (e.g. the geocoder was unavailable). It is NEVER shown to users — every
+// render site substitutes a real value (the detailed geocoded area, the active
+// city name, or a plain description) via isNamedCity below.
+export const UNRESOLVED_CITY_NAME = "Nearby";
+
+// True only for a genuine, showable place name (not empty, not the sentinel).
+export function isNamedCity(name?: string | null): name is string {
+  return !!name && name.trim() !== "" && name !== UNRESOLVED_CITY_NAME;
+}
+
 const COOKIE = "fixit_city";
 const ONE_YEAR_SECONDS = 60 * 60 * 24 * 365;
 

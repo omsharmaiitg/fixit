@@ -37,7 +37,7 @@ import { useLocationContext } from "@/contexts/LocationContext";
 import { CityPicker } from "@/components/CityPicker";
 import { CitySwitcher } from "@/components/CitySwitcher";
 import { CATEGORY_EMOJIS, CATEGORY_LABELS } from "@/lib/constants";
-import type { City } from "@/lib/city";
+import { isNamedCity, type City } from "@/lib/city";
 import type { Issue, IssueCategory, ProblemZone, PredictedHotspot } from "@/types";
 
 // Match the home feed: everything is scoped to within this radius of the city center.
@@ -259,19 +259,18 @@ function Dashboard({ data, city }: { data: DashboardData; city: City }) {
   const report = data.report;
 
   // Display name for the city: prefer the resolved activeCity name, but if the
-  // location model only had a placeholder, use the most common real cityName
-  // among the issues actually in range (e.g. "Shamli") so the page never shows
-  // "Your area".
+  // location model only had the unresolved sentinel, use the most common real
+  // cityName among the issues actually in range (e.g. "Shamli") so the page
+  // never shows a placeholder.
   const cityLabel = useMemo(() => {
-    const name = city.cityName?.trim();
-    if (name && name !== "Your area") return name;
+    if (isNamedCity(city.cityName)) return city.cityName;
     const tally = new Map<string, number>();
     for (const i of issues) {
       const n = i.cityName?.trim();
-      if (n) tally.set(n, (tally.get(n) ?? 0) + 1);
+      if (isNamedCity(n)) tally.set(n, (tally.get(n) ?? 0) + 1);
     }
     const top = [...tally.entries()].sort((a, b) => b[1] - a[1])[0];
-    return top?.[0] ?? name ?? "your area";
+    return top?.[0] ?? "your area";
   }, [city, issues]);
 
   const stats = useMemo(() => {

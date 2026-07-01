@@ -32,7 +32,12 @@ import { doc, getDoc, setDoc } from "firebase/firestore";
 import { getDb } from "@/lib/firebase";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLocation } from "@/hooks/useLocation";
-import { readCityCookie, writeCityCookie, type City } from "@/lib/city";
+import {
+  readCityCookie,
+  writeCityCookie,
+  UNRESOLVED_CITY_NAME,
+  type City,
+} from "@/lib/city";
 
 export type LocationSource = "gps" | "profile-fallback" | "guest-picked";
 
@@ -140,7 +145,9 @@ export function LocationProvider({ children }: { children: ReactNode }) {
       .then((r) => r.json())
       .then((d) => {
         if (!alive || userLat == null || userLng == null) return;
-        const name = (d.city ?? d.locality ?? "Your area") as string;
+        // Best available real place token; falls back to the (never-shown)
+        // sentinel only when the geocoder returned nothing at all.
+        const name = (d.city ?? d.locality ?? d.region ?? UNRESOLVED_CITY_NAME) as string;
         const c: City = { cityName: name, cityLat: userLat, cityLng: userLng };
         setHomeCity(c);
         setLocationSource("gps");
@@ -151,7 +158,7 @@ export function LocationProvider({ children }: { children: ReactNode }) {
       .catch(() => {
         if (!alive || userLat == null || userLng == null) return;
         // Geocode failed but we still have a real fix — anchor on it unnamed.
-        const c: City = { cityName: "Your area", cityLat: userLat, cityLng: userLng };
+        const c: City = { cityName: UNRESOLVED_CITY_NAME, cityLat: userLat, cityLng: userLng };
         setHomeCity(c);
         setLocationSource("gps");
         setNeedsCityPrompt(false);

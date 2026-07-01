@@ -22,7 +22,7 @@ import { SkeletonCard } from "@/components/SkeletonCard";
 import { FABButton } from "@/components/FABButton";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLocationContext } from "@/contexts/LocationContext";
-import type { City } from "@/lib/city";
+import { isNamedCity, type City } from "@/lib/city";
 import type { Issue } from "@/types";
 
 // The feed scope ("All" filter): issues within this radius of the active anchor
@@ -117,14 +117,19 @@ export default function HomePage() {
       .then((r) => r.json())
       .then((d) => {
         if (!alive) return;
-        // Prefer the most specific place name, then append the state when known.
-        const place = d.locality ?? d.city ?? null;
-        const label = place
-          ? d.region && d.region !== place
-            ? `${place}, ${d.region}`
-            : place
-          : null;
-        setWard({ value: label, resolved: true });
+        // Build the full detailed area: neighbourhood, city, state — deduped and
+        // ordered most-specific first (e.g. "Adarsh Colony, Shamli, Uttar Pradesh"
+        // or "Shamli, Uttar Pradesh"), rather than a single city token.
+        const seen = new Set<string>();
+        const parts: string[] = [];
+        for (const p of [d.locality, d.city, d.region] as (string | null)[]) {
+          const t = p?.trim();
+          if (t && !seen.has(t.toLowerCase())) {
+            seen.add(t.toLowerCase());
+            parts.push(t);
+          }
+        }
+        setWard({ value: parts.length ? parts.join(", ") : null, resolved: true });
       })
       .catch(() => alive && setWard({ value: null, resolved: true }));
     return () => {
@@ -138,15 +143,21 @@ export default function HomePage() {
   const anchorLat = gpsLat ?? homeCity?.cityLat ?? null;
   const anchorLng = gpsLng ?? homeCity?.cityLng ?? null;
 
-  // When exploring another city, scope by cityName and sort from that city's
-  // center; distance-from-user is meaningless, so the 1/2/5km pills are hidden.
+  // When exploring another city, scope from that city's center. We use the SAME
+  // 65km geo-scope the dashboard uses (not a cityName match) so the two always
+  // reconcile — many legacy issues have no cityName, and equality would silently
+  // drop them. The 1/2/5km pills are hidden while exploring.
   const exploreLat = activeCity?.cityLat ?? null;
   const exploreLng = activeCity?.cityLng ?? null;
 
   const scoped = useMemo(() => {
     if (isExploring) {
-      if (!activeCity) return [];
-      return issues.filter((i) => i.cityName === activeCity.cityName);
+      if (exploreLat == null || exploreLng == null) return [];
+      return issues.filter(
+        (i) =>
+          haversineDistance(exploreLat, exploreLng, i.location.lat, i.location.lng) <=
+          FEED_RADIUS_M,
+      );
     }
     if (anchorLat == null || anchorLng == null) return [];
     const within = (i: Issue, max: number) =>
@@ -154,7 +165,7 @@ export default function HomePage() {
     let pool = issues.filter((i) => within(i, FEED_RADIUS_M));
     if (distanceFilter != null) pool = pool.filter((i) => within(i, distanceFilter));
     return pool;
-  }, [issues, isExploring, activeCity, anchorLat, anchorLng, distanceFilter]);
+  }, [issues, isExploring, exploreLat, exploreLng, anchorLat, anchorLng, distanceFilter]);
 
   // Anchor used for proximity tiebreaks in the sort + card distance labels.
   const sortLat = isExploring ? exploreLat : anchorLat;
@@ -181,19 +192,16 @@ export default function HomePage() {
   //    couldn't name it, we derive the area from the issues actually in range.
   //  • Exploring, or a fallback/guest-picked city → "Viewing {city}".
   //  • Genuinely no location → a neutral fallback.
-  const PLACEHOLDER = "Your area";
   const cityFromModel =
-    (activeCity?.cityName && activeCity.cityName !== PLACEHOLDER
-      ? activeCity.cityName
-      : null) ??
-    (homeCity?.cityName && homeCity.cityName !== PLACEHOLDER ? homeCity.cityName : null);
+    (isNamedCity(activeCity?.cityName) ? activeCity!.cityName : null) ??
+    (isNamedCity(homeCity?.cityName) ? homeCity!.cityName : null);
   // Most common real cityName among the issues in range (e.g. "Shamli") — used
-  // only when the model/geocoder gave us nothing better than the placeholder.
+  // only when the model/geocoder gave us nothing better than the sentinel.
   const derivedArea = useMemo(() => {
     const tally = new Map<string, number>();
     for (const i of scoped) {
       const n = i.cityName?.trim();
-      if (n && n !== PLACEHOLDER) tally.set(n, (tally.get(n) ?? 0) + 1);
+      if (isNamedCity(n)) tally.set(n, (tally.get(n) ?? 0) + 1);
     }
     return [...tally.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
   }, [scoped]);
