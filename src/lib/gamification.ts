@@ -6,7 +6,7 @@
 // recomputeUserGamification persists the snapshot + assigns a squad.
 //
 // Build-safe: no Gemini/SDK import. All Firebase access goes through
-// firebaseHelpers (CLAUDE.md §8.4); this module never imports gamification back.
+// firebaseHelpers; this module never imports gamification back.
 
 import {
   getAllIssues,

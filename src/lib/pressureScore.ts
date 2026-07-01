@@ -40,7 +40,7 @@ export function daysSince(date: Date): number {
   return (Date.now() - date.getTime()) / 86_400_000;
 }
 
-// Aging buckets — CLAUDE.md §6. Single source of truth; firebaseHelpers
+// Aging buckets. Single source of truth; firebaseHelpers
 // re-exports this so callers don't import it twice.
 export function getAgingStatus(reportedAt: Date): AgingStatus {
   const d = daysSince(reportedAt);
@@ -51,7 +51,7 @@ export function getAgingStatus(reportedAt: Date): AgingStatus {
   return "civic_failure";
 }
 
-// Pressure Score (0–100) — CLAUDE.md §6. Deterministic; keep in sync with the
+// Pressure Score (0–100). Deterministic; keep in sync with the
 // copy referenced by the Watchtower recompute.
 export function calculatePressureScore(issue: Issue): {
   score: number;

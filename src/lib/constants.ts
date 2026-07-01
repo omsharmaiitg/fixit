@@ -50,7 +50,7 @@ export const SEVERITY_COLORS: Record<string, string> = {
   critical: "#dc2626",
 };
 
-// Aging dots — CLAUDE.md §7.
+// Aging dots.
 export const AGING_COLORS: Record<AgingStatus, string> = {
   fresh: "#16a34a",
   aging: "#ca8a04",
@@ -67,7 +67,7 @@ export const AGING_LABELS: Record<AgingStatus, string> = {
   civic_failure: "Civic Failure",
 };
 
-// Status colors — CLAUDE.md §7.
+// Status colors.
 export const STATUS_COLORS: Record<IssueStatus, string> = {
   reported: "#6b7280", // grey
   verified: "#1d4ed8", // blue

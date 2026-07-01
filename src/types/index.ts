@@ -44,7 +44,7 @@ export interface Location {
   landmark?: string;
 }
 
-// Append-only biography entry. Never edited or deleted (CLAUDE.md §8.10).
+// Append-only biography entry. Never edited or deleted.
 export type DNAEntryType =
   | "reported"
   | "verified"

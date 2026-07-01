@@ -127,7 +127,7 @@ export async function getAllIssues(): Promise<Issue[]> {
 
 // ─── Server-written intelligence collections (read-only here) ─────────────────
 // These are produced by the Watchtower agent; the dashboard just reads them.
-// tsToDate keeps the Timestamp→Date boundary in this one module (CLAUDE.md §8.4).
+// tsToDate keeps the Timestamp→Date boundary in this one module.
 
 export async function getProblemZones(): Promise<ProblemZone[]> {
   const snap = await getDocs(collection(getDb(), "problemZones"));
@@ -221,7 +221,7 @@ export async function updateIssueStatus(
 }
 
 // ─── Resolution lifecycle ─────────────────────────────────────────────────────
-// Community thresholds for confirming a submitted resolution (CLAUDE.md §10).
+// Community thresholds for confirming a submitted resolution.
 export const RESOLVE_CONFIRM_THRESHOLD = 3; // confirmations → resolved
 export const RESOLVE_CONTRADICT_THRESHOLD = 2; // contradictions → reopened
 
@@ -507,7 +507,7 @@ export async function addDiscussionEntry(
   });
 }
 
-// The ONLY way DNA is written — append-only via arrayUnion (CLAUDE.md §8.10).
+// The ONLY way DNA is written — append-only via arrayUnion.
 export async function appendDNAEntry(issueId: string, entry: DNAEntry): Promise<void> {
   await updateDoc(doc(getDb(), "issues", issueId), {
     dna: arrayUnion(entry),

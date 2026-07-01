@@ -1,7 +1,7 @@
 "use client";
 
-// Public, login-free Impact Dashboard — the transparency showcase (CLAUDE.md
-// §2: "radical public transparency"). Reads the live corpus + the Watchtower's
+// Public, login-free Impact Dashboard — the transparency showcase built on
+// radical public transparency. Reads the live corpus + the Watchtower's
 // server-written intelligence collections. Build-safe: no Gemini/SDK import.
 // Light-theme locked to match the rest of the app (globals.css).
 

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 // Reverse-geocode lat/lng → a human locality/ward, server-side so the
-// GOOGLE_GEOCODING_KEY never reaches the browser (CLAUDE.md §8.8).
+// GOOGLE_GEOCODING_KEY never reaches the browser (server-only).
 // Phase 3's LocationPicker reverse-geocodes through this same route.
 export const dynamic = "force-dynamic";
 
