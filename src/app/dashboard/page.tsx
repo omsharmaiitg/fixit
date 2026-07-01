@@ -234,14 +234,16 @@ function TopBar() {
 }
 
 function Dashboard({ data, city }: { data: DashboardData; city: City }) {
-  // Scope strictly to this city. Issues and forecasts match cityName exactly
-  // (so we never borrow another city's data); zones carry only coordinates, so
-  // they fall back to a 65km geo-fence around the city center.
+  // Scope everything the same way the feed does — by distance to the active
+  // city's center — so a placeholder city name (e.g. "Your area" from a GPS fix
+  // the geocoder couldn't name) never zeroes out the record. All coordinates
+  // come from activeCity, so this is exactly the feed's successful anchor.
   const inCity = (lat: number, lng: number) =>
     haversineDistance(city.cityLat, city.cityLng, lat, lng) <= CITY_RADIUS_M;
 
   const issues = useMemo(
-    () => data.issues.filter((i) => i.cityName === city.cityName),
+    () => data.issues.filter((i) => inCity(i.location.lat, i.location.lng)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [data.issues, city],
   );
   const zones = useMemo(
@@ -250,10 +252,27 @@ function Dashboard({ data, city }: { data: DashboardData; city: City }) {
     [data.zones, city],
   );
   const hotspots = useMemo(
-    () => data.hotspots.filter((h) => h.cityName === city.cityName),
+    () => data.hotspots.filter((h) => inCity(h.lat, h.lng)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [data.hotspots, city],
   );
   const report = data.report;
+
+  // Display name for the city: prefer the resolved activeCity name, but if the
+  // location model only had a placeholder, use the most common real cityName
+  // among the issues actually in range (e.g. "Shamli") so the page never shows
+  // "Your area".
+  const cityLabel = useMemo(() => {
+    const name = city.cityName?.trim();
+    if (name && name !== "Your area") return name;
+    const tally = new Map<string, number>();
+    for (const i of issues) {
+      const n = i.cityName?.trim();
+      if (n) tally.set(n, (tally.get(n) ?? 0) + 1);
+    }
+    const top = [...tally.entries()].sort((a, b) => b[1] - a[1])[0];
+    return top?.[0] ?? name ?? "your area";
+  }, [city, issues]);
 
   const stats = useMemo(() => {
     const total = issues.length;
@@ -290,13 +309,13 @@ function Dashboard({ data, city }: { data: DashboardData; city: City }) {
       {/* title band */}
       <Reveal className="pt-8">
         <p className="font-mono text-xs font-semibold uppercase tracking-[0.18em] text-primary">
-          FixIt · Impact · {city.cityName}
+          FixIt · Impact · {cityLabel}
         </p>
         <h1 className="mt-2 max-w-3xl font-display text-4xl font-extrabold leading-[1.05] tracking-tight text-foreground md:text-6xl">
-          What {city.cityName} reported, and what got fixed.
+          What {cityLabel} reported, and what got fixed.
         </h1>
         <p className="mt-4 max-w-2xl text-base leading-relaxed text-muted">
-          Every report, verification and resolution in {city.cityName} is a public
+          Every report, verification and resolution in {cityLabel} is a public
           record. No login, no edits, nothing hidden. This is the accountability layer.
         </p>
       </Reveal>
@@ -318,7 +337,7 @@ function Dashboard({ data, city }: { data: DashboardData; city: City }) {
 
       <HotspotsSection hotspots={hotspots} />
 
-      <WeeklyReportSection report={report} cityName={city.cityName} />
+      <WeeklyReportSection report={report} cityName={cityLabel} />
     </div>
   );
 }
