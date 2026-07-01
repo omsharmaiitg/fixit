@@ -12,6 +12,10 @@ const nextConfig: NextConfig = {
       { protocol: "https", hostname: "lh3.googleusercontent.com" },
       // Mock photos for seeded demo issues (Seed Shamli demo data).
       { protocol: "https", hostname: "picsum.photos" },
+      // Crash-guard: older seeded docs may still hold loremflickr URLs until
+      // re-seeded. Whitelisting stops next/image hard-crashing on them — but the
+      // host 404s, so those thumbnails stay blank until the batch is re-seeded.
+      { protocol: "https", hostname: "loremflickr.com" },
     ],
   },
 };
