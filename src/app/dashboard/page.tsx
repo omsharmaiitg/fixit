@@ -34,7 +34,6 @@ import {
 } from "@/lib/firebaseHelpers";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLocationContext } from "@/contexts/LocationContext";
-import { CityPicker } from "@/components/CityPicker";
 import { CitySwitcher } from "@/components/CitySwitcher";
 import { CATEGORY_EMOJIS, CATEGORY_LABELS } from "@/lib/constants";
 import { isNamedCity, type City } from "@/lib/city";
@@ -140,7 +139,7 @@ function useDashboardData(cityName?: string) {
 export default function DashboardPage() {
   // Phase 1 location model: the dashboard reflects the city currently being
   // viewed (home, or another city while exploring).
-  const { activeCity, needsCityPrompt, pickHomeCity } = useLocationContext();
+  const { activeCity, resolved } = useLocationContext();
   const { data, error, refresh } = useDashboardData(activeCity?.cityName);
 
   return (
@@ -149,8 +148,9 @@ export default function DashboardPage() {
         <TopBar />
 
         {error && <ErrorBlock message={error} onRetry={refresh} />}
-        {!error && needsCityPrompt && <CityGate onPick={pickHomeCity} />}
-        {!error && !needsCityPrompt && !activeCity && <LoadingState />}
+        {/* No active city: still resolving GPS → spinner; GPS settled with no
+            fix → the unavailable message (no stored-city fallback). */}
+        {!error && !activeCity && (resolved ? <GpsUnavailable /> : <LoadingState />)}
         {!error && activeCity && !data && <LoadingState />}
         {!error && activeCity && data && (
           <>
@@ -193,24 +193,22 @@ function CityControls() {
   );
 }
 
-// Public dashboard with no city chosen yet → ask for one (same source the feed
-// uses; persists to the user doc when logged in, else the fixit_city cookie).
-function CityGate({ onPick }: { onPick: (city: City) => void }) {
+// GPS off/denied/unavailable — the dashboard anchors on the live home city and
+// does NOT fall back to any stored city, so there's nothing to show.
+function GpsUnavailable() {
   return (
     <div className="mx-auto mt-16 max-w-lg">
       <p className="font-mono text-xs font-semibold uppercase tracking-[0.18em] text-primary">
         FixIt · Impact
       </p>
-      <h1 className="mt-2 font-display text-3xl font-extrabold leading-tight tracking-tight text-foreground">
-        Which city&apos;s record do you want to see?
+      <h1 className="mt-2 flex items-center gap-2 font-display text-3xl font-extrabold leading-tight tracking-tight text-foreground">
+        <MapPin size={28} strokeWidth={2.2} className="shrink-0 text-primary" />
+        Location unavailable
       </h1>
       <p className="mt-3 text-sm leading-relaxed text-muted">
-        The Impact Dashboard is scoped to one city. Pick yours to see what was
-        reported there, and what got fixed.
+        Turn on GPS to fetch your home city. The Impact Dashboard is scoped to
+        your live location — it never uses a stored city.
       </p>
-      <div className="mt-5">
-        <CityPicker onPick={onPick} />
-      </div>
     </div>
   );
 }

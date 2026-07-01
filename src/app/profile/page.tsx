@@ -17,7 +17,8 @@ import {
   MapPin,
 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
-import { useCity } from "@/hooks/useCity";
+import { useLocationContext } from "@/contexts/LocationContext";
+import { isNamedCity } from "@/lib/city";
 import { getAllIssues } from "@/lib/firebaseHelpers";
 import {
   computeGamification,
@@ -41,7 +42,8 @@ function initialsOf(name?: string | null, email?: string | null): string {
 export default function ProfilePage() {
   const router = useRouter();
   const { user, loading, signOut } = useAuth();
-  const { city } = useCity();
+  // Home city is live GPS only — read-only, never from a stored profile city.
+  const { homeCity, resolved } = useLocationContext();
 
   const [reports, setReports] = useState<Issue[]>([]);
   const [reportsLoading, setReportsLoading] = useState(true);
@@ -187,12 +189,16 @@ export default function ProfilePage() {
 
           {bio && <p className="mt-3 text-sm leading-relaxed text-foreground">{bio}</p>}
 
-          {city && (
-            <p className="mt-3 flex items-center gap-1.5 text-sm font-medium text-muted">
-              <MapPin size={15} className="shrink-0 text-primary" strokeWidth={2.2} />
-              {city.cityName}
-            </p>
-          )}
+          <p className="mt-3 flex items-center gap-1.5 text-sm font-medium text-muted">
+            <MapPin size={15} className="shrink-0 text-primary" strokeWidth={2.2} />
+            {homeCity
+              ? isNamedCity(homeCity.cityName)
+                ? homeCity.cityName
+                : "Your current location"
+              : resolved
+                ? "Location unavailable — turn on GPS to fetch home city."
+                : "Pinpointing your location…"}
+          </p>
 
           <Link
             href="/profile/edit"

@@ -7,9 +7,10 @@ import { motion } from "motion/react";
 import { updateProfile } from "firebase/auth";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { doc, getDoc, setDoc } from "firebase/firestore";
-import { ArrowLeft, Camera, Loader2, Check } from "lucide-react";
+import { ArrowLeft, Camera, Loader2, Check, MapPin } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
-import { CitySwitcher } from "@/components/CitySwitcher";
+import { useLocationContext } from "@/contexts/LocationContext";
+import { isNamedCity } from "@/lib/city";
 import { getFirebaseStorage, getDb } from "@/lib/firebase";
 
 function initialsOf(name?: string | null, email?: string | null): string {
@@ -178,14 +179,8 @@ export default function EditProfilePage() {
           </Field>
         </section>
 
-        {/* city */}
-        <section className="rounded-2xl bg-surface p-4 shadow-card">
-          <h3 className="mb-1 font-display text-sm font-bold text-foreground">Your city</h3>
-          <p className="mb-3 text-xs text-muted">
-            Your feed shows issues within 65 km of your city.
-          </p>
-          <CitySwitcher />
-        </section>
+        {/* city — automatic (live GPS), read-only. No manual city field. */}
+        <HomeCitySection />
 
         {error && (
           <p className="rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>
@@ -209,6 +204,32 @@ export default function EditProfilePage() {
         )}
       </button>
     </div>
+  );
+}
+
+// Location is fully automatic now — this shows the live GPS home city, read-only.
+// There is no editable city field: home city is never manually set.
+function HomeCitySection() {
+  const { homeCity, resolved } = useLocationContext();
+  const label = homeCity
+    ? isNamedCity(homeCity.cityName)
+      ? homeCity.cityName
+      : "Your current location"
+    : resolved
+      ? "Location unavailable — turn on GPS to fetch home city."
+      : "Pinpointing your location…";
+  return (
+    <section className="rounded-2xl bg-surface p-4 shadow-card">
+      <h3 className="mb-1 font-display text-sm font-bold text-foreground">Your city</h3>
+      <p className="mb-3 text-xs text-muted">
+        Set automatically from your live location (GPS). Your feed shows issues
+        within 65 km of it.
+      </p>
+      <p className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
+        <MapPin size={15} className="shrink-0 text-primary" strokeWidth={2.2} />
+        {label}
+      </p>
+    </section>
   );
 }
 

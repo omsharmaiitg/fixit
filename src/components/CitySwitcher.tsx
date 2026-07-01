@@ -19,8 +19,6 @@ type Mode = "current" | "explore";
 
 const SOURCE_NOTE: Record<string, string> = {
   gps: "Set from your live location.",
-  "profile-fallback": "Saved to your profile — used when GPS is unavailable.",
-  "guest-picked": "Chosen by you for browsing.",
 };
 
 // A picked city this close to home is treated as the home city itself — a city's

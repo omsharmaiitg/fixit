@@ -1,16 +1,10 @@
 "use client";
 
 // ─── Single source of truth for city / location state ────────────────────────
-// Everything that needs to know "where is the user" and "which city are we
-// looking at" reads from here — no component reaches for GPS or the profile city
-// directly anymore.
-//
-// Model:
-//   • locationSource — how we learned the user's real city:
-//       'gps'              live GPS, reverse-geocoded            (actions allowed)
-//       'profile-fallback' GPS denied/unavailable, logged in     (read-only)
-//       'guest-picked'     guest with no GPS picked a city once   (read-only)
-//   • homeCity   — the user's REAL city (resolved in the order above).
+// Location is FULLY AUTOMATIC. There is no manual city and no stored fallback:
+//   • homeCity   — the user's live GPS location, reverse-geocoded to a name.
+//     ALWAYS from GPS. Never user-editable, never read from a profile city.
+//     Null when GPS is off/denied/unavailable — we deliberately do NOT fall back.
 //   • activeCity — the city currently being VIEWED. Defaults to homeCity and is
 //     never persisted, so a fresh app load always resets back to homeCity
 //     (explore is never sticky).
@@ -24,118 +18,51 @@ import {
   useContext,
   useEffect,
   useMemo,
-  useRef,
   useState,
   type ReactNode,
 } from "react";
-import { doc, getDoc, setDoc } from "firebase/firestore";
-import { getDb } from "@/lib/firebase";
-import { useAuth } from "@/contexts/AuthContext";
 import { useLocation } from "@/hooks/useLocation";
-import {
-  readCityCookie,
-  writeCityCookie,
-  UNRESOLVED_CITY_NAME,
-  type City,
-} from "@/lib/city";
+import { UNRESOLVED_CITY_NAME, type City } from "@/lib/city";
 
-export type LocationSource = "gps" | "profile-fallback" | "guest-picked";
+// Location is always live GPS now — the only "source" is GPS (or none).
+export type LocationSource = "gps";
 
 interface LocationContextValue {
-  // True once we've settled on a homeCity OR determined we must prompt for one.
+  // True once we've settled on a homeCity OR determined GPS is unavailable.
   resolved: boolean;
-  locationSource: LocationSource | null;
-  homeCity: City | null;
+  locationSource: LocationSource | null; // 'gps' when we have a fix, else null
+  homeCity: City | null; // live GPS location; null when GPS is unavailable
   activeCity: City | null;
   isExploring: boolean;
   canAct: boolean;
-  // Guest (or first-run logged-in user) with no GPS and no stored city: the UI
-  // should prompt them to pick a city once. Cleared by pickHomeCity.
-  needsCityPrompt: boolean;
-  // Live GPS fix, exposed for feed anchoring (Phase 2). Null until/unless GPS.
+  // Live GPS fix, exposed for feed anchoring. Null until/unless GPS.
   gpsLat: number | null;
   gpsLng: number | null;
   // View another city without changing homeCity ("🔭 explore" mode).
   setActiveCity: (city: City) => void;
   // Stop exploring — snap activeCity back to homeCity.
   resetToHome: () => void;
-  // Answer the first-run prompt: set the user's real city (persisted).
-  pickHomeCity: (city: City) => Promise<void>;
 }
 
 const LocationCtx = createContext<LocationContextValue | null>(null);
 
-async function readProfileCity(uid: string): Promise<City | null> {
-  try {
-    const snap = await getDoc(doc(getDb(), "users", uid));
-    const d = snap.data();
-    if (
-      d &&
-      typeof d.cityName === "string" &&
-      typeof d.cityLat === "number" &&
-      typeof d.cityLng === "number"
-    ) {
-      return { cityName: d.cityName, cityLat: d.cityLat, cityLng: d.cityLng };
-    }
-  } catch {
-    /* fall through — caller handles the null */
-  }
-  return null;
-}
-
-// Persist a resolved home city: cookie always (fast cache + guest store), and
-// the user doc when logged in (so it survives as the GPS-denied fallback).
-async function persistCity(city: City, uid: string | null): Promise<void> {
-  writeCityCookie(city);
-  if (uid) {
-    try {
-      await setDoc(
-        doc(getDb(), "users", uid),
-        { cityName: city.cityName, cityLat: city.cityLat, cityLng: city.cityLng },
-        { merge: true },
-      );
-    } catch {
-      /* cookie still holds it; non-fatal */
-    }
-  }
-}
-
 export function LocationProvider({ children }: { children: ReactNode }) {
-  const { user, loading: authLoading } = useAuth();
   const { userLat, userLng, locationError, requestLocation } = useLocation();
 
   const [homeCity, setHomeCity] = useState<City | null>(null);
-  const [locationSource, setLocationSource] = useState<LocationSource | null>(null);
   const [resolved, setResolved] = useState(false);
-  const [needsCityPrompt, setNeedsCityPrompt] = useState(false);
   // Only set when the user actively explores another city. activeCity is derived
   // as exploreCity ?? homeCity, so when not exploring it always tracks home —
   // and because it's never persisted, a fresh load starts back at home.
   const [exploreCity, setExploreCity] = useState<City | null>(null);
 
-  // Ask for GPS once on app load — live GPS is the primary signal.
+  // Ask for GPS once on app load — live GPS is the only signal.
   useEffect(() => {
     requestLocation();
   }, [requestLocation]);
 
-  // Explore is never inherited across auth identities. When the signed-in user
-  // changes — and crucially on logout — snap activeCity back to homeCity so the
-  // dashboard/feed immediately reflect the current-location city, never the
-  // previously-logged-in city. homeCity itself is re-resolved by the GPS/
-  // fallback effects below.
-  const prevUidRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (authLoading) return;
-    const uid = user?.uid ?? null;
-    if (prevUidRef.current !== uid) {
-      prevUidRef.current = uid;
-      setExploreCity(null);
-    }
-  }, [authLoading, user]);
-
-  // (1) GPS path — reverse-geocode the fix into a city. GPS always wins, and we
-  // persist it so it doubles as the profile fallback later. Keyed on coarse
-  // coords so jitter doesn't refetch.
+  // GPS path — reverse-geocode the fix into a city name. GPS is the ONLY source
+  // of homeCity. Keyed on coarse coords so jitter doesn't refetch.
   const latKey = userLat != null ? userLat.toFixed(3) : null;
   const lngKey = userLng != null ? userLng.toFixed(3) : null;
   useEffect(() => {
@@ -148,79 +75,32 @@ export function LocationProvider({ children }: { children: ReactNode }) {
         // Best available real place token; falls back to the (never-shown)
         // sentinel only when the geocoder returned nothing at all.
         const name = (d.city ?? d.locality ?? d.region ?? UNRESOLVED_CITY_NAME) as string;
-        const c: City = { cityName: name, cityLat: userLat, cityLng: userLng };
-        setHomeCity(c);
-        setLocationSource("gps");
-        setNeedsCityPrompt(false);
+        setHomeCity({ cityName: name, cityLat: userLat, cityLng: userLng });
         setResolved(true);
-        void persistCity(c, user?.uid ?? null);
       })
       .catch(() => {
         if (!alive || userLat == null || userLng == null) return;
         // Geocode failed but we still have a real fix — anchor on it unnamed.
-        const c: City = { cityName: UNRESOLVED_CITY_NAME, cityLat: userLat, cityLng: userLng };
-        setHomeCity(c);
-        setLocationSource("gps");
-        setNeedsCityPrompt(false);
+        setHomeCity({ cityName: UNRESOLVED_CITY_NAME, cityLat: userLat, cityLng: userLng });
         setResolved(true);
       });
     return () => {
       alive = false;
     };
-    // latKey/lngKey capture the coords; user is read at fire time only.
+    // latKey/lngKey capture the coords; userLat/userLng read at fire time only.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [latKey, lngKey]);
 
-  // (2) Fallback path — GPS has definitively failed and produced no coords.
-  // Logged in → profile city; guest → previously-picked city; neither → prompt.
+  // GPS off/denied/unavailable — NO fallback to any stored city. homeCity stays
+  // null; consumers show "turn on GPS to fetch home city" instead.
   useEffect(() => {
-    if (authLoading) return;
     if (userLat != null && userLng != null) return; // GPS path owns this
     if (locationError == null) return; // GPS still pending — wait
-    if (locationSource === "gps") return; // already anchored on a real fix
-    let alive = true;
-    (async () => {
-      if (user) {
-        const c = (await readProfileCity(user.uid)) ?? readCityCookie();
-        if (!alive) return;
-        if (c) {
-          setHomeCity(c);
-          setLocationSource("profile-fallback");
-          setNeedsCityPrompt(false);
-        } else {
-          setNeedsCityPrompt(true);
-        }
-      } else {
-        const c = readCityCookie();
-        if (!alive) return;
-        if (c) {
-          setHomeCity(c);
-          setLocationSource("guest-picked");
-          setNeedsCityPrompt(false);
-        } else {
-          setNeedsCityPrompt(true);
-        }
-      }
-      if (alive) setResolved(true);
-    })();
-    return () => {
-      alive = false;
-    };
-  }, [authLoading, user, userLat, userLng, locationError, locationSource]);
-
-  const pickHomeCity = useCallback(
-    async (city: City) => {
-      setHomeCity(city);
-      setExploreCity(null);
-      // A manual pick is the guest path; a logged-in user picking one seeds
-      // their profile fallback.
-      setLocationSource(user ? "profile-fallback" : "guest-picked");
-      setNeedsCityPrompt(false);
-      setResolved(true);
-      await persistCity(city, user?.uid ?? null);
-    },
-    [user],
-  );
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setHomeCity(null);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setResolved(true);
+  }, [userLat, userLng, locationError]);
 
   const setActiveCity = useCallback((city: City) => setExploreCity(city), []);
   const resetToHome = useCallback(() => setExploreCity(null), []);
@@ -233,30 +113,17 @@ export function LocationProvider({ children }: { children: ReactNode }) {
       exploreCity.cityName !== homeCity.cityName;
     return {
       resolved,
-      locationSource,
+      locationSource: homeCity ? "gps" : null,
       homeCity,
       activeCity,
       isExploring,
-      canAct: locationSource === "gps" && !isExploring,
-      needsCityPrompt,
+      canAct: homeCity != null && !isExploring,
       gpsLat: userLat,
       gpsLng: userLng,
       setActiveCity,
       resetToHome,
-      pickHomeCity,
     };
-  }, [
-    exploreCity,
-    homeCity,
-    resolved,
-    locationSource,
-    needsCityPrompt,
-    userLat,
-    userLng,
-    setActiveCity,
-    resetToHome,
-    pickHomeCity,
-  ]);
+  }, [exploreCity, homeCity, resolved, userLat, userLng, setActiveCity, resetToHome]);
 
   return <LocationCtx.Provider value={value}>{children}</LocationCtx.Provider>;
 }

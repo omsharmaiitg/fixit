@@ -15,15 +15,17 @@ import {
 import { useIssues, sortIssues } from "@/hooks/useIssues";
 import { haversineDistance } from "@/lib/firebaseHelpers";
 import { FilterBar } from "@/components/FilterBar";
-import { CityPicker } from "@/components/CityPicker";
 import { IssueCard } from "@/components/IssueCard";
 import { ExploreBanner } from "@/components/ExploreBanner";
 import { SkeletonCard } from "@/components/SkeletonCard";
 import { FABButton } from "@/components/FABButton";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLocationContext } from "@/contexts/LocationContext";
-import { isNamedCity, type City } from "@/lib/city";
+import { isNamedCity } from "@/lib/city";
 import type { Issue } from "@/types";
+
+// Shown wherever the home city would appear when GPS is off/denied/unavailable.
+const GPS_UNAVAILABLE = "Location unavailable — turn on GPS to fetch home city.";
 
 // The feed scope ("All" filter): issues within this radius of the active anchor
 // (live GPS, else the profile city center). Nothing beyond it ever shows.
@@ -73,11 +75,9 @@ export default function HomePage() {
     canAct,
     activeCity,
     homeCity,
-    locationSource,
+    resolved,
     gpsLat,
     gpsLng,
-    needsCityPrompt,
-    pickHomeCity,
   } = useLocationContext();
   const [tab, setTab] = useState<Tab>("active");
   const [distanceFilter, setDistanceFilter] = useState<number | null>(2000);
@@ -185,13 +185,12 @@ export default function HomePage() {
     );
   }, [scoped, tab, sortLat, sortLng]);
 
-  // Greeting subtitle:
-  //  • Live GPS in the home city → the user's EXACT reverse-geocoded area
-  //    ("Area, State" or the locality), reusing the cached result. Never the
-  //    literal "Your area" placeholder once GPS succeeded — if the geocoder
-  //    couldn't name it, we derive the area from the issues actually in range.
-  //  • Exploring, or a fallback/guest-picked city → "Viewing {city}".
-  //  • Genuinely no location → a neutral fallback.
+  // Greeting location label:
+  //  • Home (live GPS) → the user's EXACT reverse-geocoded area ("Area, State"
+  //    or the locality), reusing the cached result. If the geocoder couldn't
+  //    name it, we derive the area from the issues actually in range.
+  //  • Exploring another city → "Viewing {city}".
+  //  • GPS off/denied → the unavailable message (no stored-city fallback).
   const cityFromModel =
     (isNamedCity(activeCity?.cityName) ? activeCity!.cityName : null) ??
     (isNamedCity(homeCity?.cityName) ? homeCity!.cityName : null);
@@ -206,27 +205,27 @@ export default function HomePage() {
     return [...tally.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
   }, [scoped]);
 
+  // Not exploring → live home city/locality only (never an "active city" label).
+  // Exploring → "Viewing {activeCity}". GPS off → the unavailable message.
   let locationLabel: string;
-  if (locationSource === "gps" && !isExploring) {
-    if (!ward.resolved) {
-      locationLabel = "Pinpointing your area…";
-    } else {
-      locationLabel = ward.value ?? cityFromModel ?? derivedArea ?? "Near you";
-    }
-  } else if (cityFromModel ?? derivedArea) {
-    locationLabel = `Viewing ${cityFromModel ?? derivedArea}`;
+  if (isExploring) {
+    locationLabel = `Viewing ${cityFromModel ?? derivedArea ?? activeCity?.cityName ?? "this city"}`;
+  } else if (homeCity == null) {
+    locationLabel = resolved ? GPS_UNAVAILABLE : "Pinpointing your area…";
+  } else if (!ward.resolved) {
+    locationLabel = "Pinpointing your area…";
   } else {
-    locationLabel = "Choose your city";
+    locationLabel = ward.value ?? cityFromModel ?? derivedArea ?? "Near you";
   }
+
+  // GPS off/denied and settled → no anchor, no fallback: show the message in the
+  // feed area instead of endless skeletons.
+  const gpsUnavailable = !isExploring && resolved && homeCity == null;
 
   // Skeletons while we resolve an anchor (GPS or city) or the corpus loads. When
   // exploring we don't need the home anchor — just the corpus.
-  const showLoading = loading || (!isExploring && anchorLat == null);
-
-  // GPS unavailable AND no stored city → ask for a city to anchor to.
-  if (needsCityPrompt) {
-    return <CityOnboarding onPick={pickHomeCity} />;
-  }
+  const showLoading =
+    !gpsUnavailable && (loading || (!isExploring && anchorLat == null));
 
   // Count-line suffix: city name when exploring, distance band otherwise.
   const scopeLabel = isExploring
@@ -322,8 +321,21 @@ export default function HomePage() {
         </div>
       )}
 
+      {/* GPS off/denied — no home city, no fallback */}
+      {gpsUnavailable && !error && (
+        <div className="mt-6 flex flex-col items-center rounded-2xl bg-surface p-6 text-center shadow-card">
+          <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+            <MapPin size={26} strokeWidth={2} />
+          </div>
+          <p className="mt-3 text-sm font-semibold text-foreground">{GPS_UNAVAILABLE}</p>
+          <p className="mt-1 text-xs text-muted">
+            Your home city is set automatically from your live location.
+          </p>
+        </div>
+      )}
+
       {/* count summary */}
-      {!showLoading && !error && (
+      {!showLoading && !error && !gpsUnavailable && (
         <p className="mb-3 mt-1 px-1 text-xs font-medium text-muted">
           <span className="font-bold text-foreground">{sorted.length}</span>{" "}
           {tab === "resolved"
@@ -359,7 +371,7 @@ export default function HomePage() {
       )}
 
       {/* empty state */}
-      {!showLoading && !error && sorted.length === 0 && (
+      {!showLoading && !error && !gpsUnavailable && sorted.length === 0 && (
         <div className="mt-10 flex flex-col items-center px-6 text-center">
           {tab === "resolved" ? (
             <>
@@ -419,33 +431,6 @@ export default function HomePage() {
       {/* Reporting is an action — only offered when the user can actually act
           (live GPS, in their home city). Removed, not just disabled, otherwise. */}
       {canAct && <FABButton />}
-    </div>
-  );
-}
-
-// First-run city selection. Shown until a city is chosen; the choice is then
-// persisted (cookie for guests, user doc when logged in) by pickHomeCity.
-function CityOnboarding({ onPick }: { onPick: (city: City) => void }) {
-  return (
-    <div className="mx-auto flex min-h-[100dvh] w-full max-w-md flex-col justify-center px-6">
-      <motion.div
-        initial={{ opacity: 0, y: 14 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
-      >
-        <h1 className="font-display text-2xl font-extrabold tracking-tight text-primary-dark">
-          Welcome to FixIt 👋
-        </h1>
-        <div className="mt-1 flex items-center gap-1.5 text-sm font-medium text-muted">
-          <MapPin size={15} className="shrink-0 text-primary" strokeWidth={2.2} />
-          Which city are you in?
-        </div>
-        <p className="mt-3 mb-4 text-sm leading-relaxed text-muted">
-          We&apos;ll show you civic issues reported across your city, so your feed
-          stays local and relevant.
-        </p>
-        <CityPicker onPick={onPick} />
-      </motion.div>
     </div>
   );
 }
