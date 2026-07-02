@@ -9,6 +9,7 @@
 ![Google Cloud Run](https://img.shields.io/badge/Google_Cloud_Run-deployed-4285F4)
 
 **Live app:** https://fixit-341094842696.asia-south1.run.app/
+
 **Strategy & architecture:** [Google Doc](https://docs.google.com/document/d/1N0pL-ZYgITc_ugbA-_CqAk87-dKDvlj6rp6FPFjrDy4/edit?usp=sharing)
 
 > Submitted for the **Vibe2Ship Hackathon** — Coding Ninjas × Google for Developers, 2026.
