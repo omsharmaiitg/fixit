@@ -35,6 +35,12 @@ export type AgingStatus =
 
 export type TimeOfDay = "morning" | "afternoon" | "evening" | "night";
 
+// A single user's vote on a report. The two card buttons are mutually
+// exclusive: at most one is active, `null` means neither. Persisted implicitly
+// via membership in the issue's upvotedBy / cantFindBy arrays — see
+// `setVote` (atomic write) and `applyVoteLocal` (optimistic mirror).
+export type VoteState = "upvote" | "cant_find" | null;
+
 export type Language = "en" | "hi" | "ta" | "bn" | "te" | "mr";
 
 export interface Location {

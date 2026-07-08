@@ -9,6 +9,15 @@ import { useAuth } from "@/contexts/AuthContext";
 
 type Mode = "login" | "register";
 
+// Where to land after auth: the landing page sends ?next=/ so its "Get started"
+// flows into the feed; every other entry keeps the /profile default. Internal
+// paths only (reject protocol-relative //host). Read from window (client-only
+// call sites) to avoid the useSearchParams Suspense requirement.
+function nextTarget(): string {
+  const n = new URLSearchParams(window.location.search).get("next");
+  return n && n.startsWith("/") && !n.startsWith("//") ? n : "/profile";
+}
+
 function GoogleLogo() {
   // Brand asset (Google "G") — exception to the no-hand-rolled-SVG rule, since
   // the OAuth button needs the official mark and there's no icon-lib version.
@@ -36,7 +45,7 @@ export default function AuthPage() {
 
   // Already signed in → leave the auth screen.
   useEffect(() => {
-    if (!loading && user) router.replace("/profile");
+    if (!loading && user) router.replace(nextTarget());
   }, [loading, user, router]);
 
   function validate(): string | null {
@@ -63,7 +72,7 @@ export default function AuthPage() {
     try {
       if (mode === "register") await registerWithEmail(name.trim(), email.trim(), password);
       else await loginWithEmail(email.trim(), password);
-      router.replace("/profile");
+      router.replace(nextTarget());
     } catch {
       // error surfaced via context `error`
       setSubmitting(false);
@@ -75,7 +84,7 @@ export default function AuthPage() {
     setSubmitting(true);
     try {
       await signInWithGoogle();
-      router.replace("/profile");
+      router.replace(nextTarget());
     } catch {
       setSubmitting(false);
     }

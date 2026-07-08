@@ -36,6 +36,7 @@ import type {
   ProblemZone,
   Squad,
   User,
+  VoteState,
 } from "@/types";
 import { citySlug } from "@/lib/city";
 
@@ -412,16 +413,60 @@ export async function notifyIssueFollowers(
   await batch.commit();
 }
 
-// Toggle this reporter's upvote. Adds the id if absent (upvote), removes it if
-// present (un-upvote), keeps upvoteCount === upvotedBy.length (a true headcount),
-// and freezes the voter's proximity `weight` in upvoteWeights on cast (Part 3b).
-// The WEIGHTED sum — not the headcount — drives the pressure score and the
-// reported→verified transition (Part 3d). Runs in a transaction so concurrent
-// votes don't clobber each other. `weight` defaults to baseline (location
-// unknown / un-upvote, where it's ignored).
-export async function upvoteIssue(
+// Rebuild an issue's per-reporter vote membership for a single reporter,
+// enforcing the mutual-exclusion invariant: a reporter appears in AT MOST one of
+// upvotedBy / cantFindBy. We strip the reporter from BOTH arrays first, then
+// re-add to the target (if any) — so switching sides, toggling off, and casting
+// fresh all funnel through the same rebuild with no double-counting. Counts are
+// derived as `.length` (true headcounts) and the proximity `weight` is frozen in
+// upvoteWeights only while the reporter is an upvoter. Pure — used verbatim by
+// both the atomic write (`setVote`) and the optimistic UI mirror, so the two can
+// never diverge.
+export function applyVoteLocal(
+  issue: Issue,
+  reporterId: string,
+  next: VoteState,
+  weight: number = BASELINE_WEIGHT,
+): Issue {
+  const upvotedBy = (issue.upvotedBy ?? []).filter((r) => r !== reporterId);
+  const cantFindBy = (issue.cantFindBy ?? []).filter((r) => r !== reporterId);
+  const upvoteWeights = { ...(issue.upvoteWeights ?? {}) };
+  delete upvoteWeights[reporterId];
+
+  if (next === "upvote") {
+    upvotedBy.push(reporterId);
+    upvoteWeights[reporterId] = weight;
+  } else if (next === "cant_find") {
+    cantFindBy.push(reporterId);
+  }
+  // next === null → reporter left out of both arrays (un-toggled).
+
+  const result: Issue = {
+    ...issue,
+    upvotedBy,
+    upvoteCount: upvotedBy.length,
+    upvoteWeights,
+    cantFindBy,
+    cantFindCount: cantFindBy.length,
+  };
+  const { score, breakdown } = calculatePressureScore(result);
+  result.pressureScore = score;
+  result.pressureBreakdown = breakdown;
+  return result;
+}
+
+// Set this reporter's vote to `next` ("upvote" | "cant_find" | null) atomically.
+// The two votes are mutually exclusive, so this is the ONLY vote write: it keeps
+// upvoteCount === upvotedBy.length and cantFindCount === cantFindBy.length, and
+// switching sides decrements one count and increments the other in the SAME
+// transaction — the counts can never drift from the arrays, even under concurrent
+// votes. `weight` freezes the voter's proximity weight on an upvote cast (Part 3b);
+// it's ignored for cant_find / un-toggle. The WEIGHTED upvote sum — not the
+// headcount — drives the pressure score and the reported→verified transition.
+export async function setVote(
   issueId: string,
   reporterId: string,
+  next: VoteState,
   weight: number = BASELINE_WEIGHT,
 ): Promise<void> {
   if (!reporterId) return;
@@ -431,34 +476,33 @@ export async function upvoteIssue(
     const snap = await tx.get(ref);
     if (!snap.exists()) return;
     const issue = issueFromSnapshot(snap.id, snap.data());
-    const upvotedBy = [...(issue.upvotedBy ?? [])];
-    const weights = { ...(issue.upvoteWeights ?? {}) };
-    const i = upvotedBy.indexOf(reporterId);
-    const adding = i < 0;
-    if (adding) {
-      upvotedBy.push(reporterId);
-      weights[reporterId] = weight;
-    } else {
-      upvotedBy.splice(i, 1);
-      delete weights[reporterId];
-    }
+    const wasUpvoter = (issue.upvotedBy ?? []).includes(reporterId);
 
-    const next = { ...issue, upvotedBy, upvoteCount: upvotedBy.length, upvoteWeights: weights };
-    const { score, breakdown } = calculatePressureScore(next);
+    // Single rebuild handles cast / switch / un-toggle and guarantees the
+    // reporter ends up in at most one array (see applyVoteLocal).
+    const result = applyVoteLocal(issue, reporterId, next, weight);
     const update: Record<string, unknown> = {
-      upvotedBy,
-      upvoteCount: upvotedBy.length,
-      upvoteWeights: weights,
-      pressureScore: score,
-      pressureBreakdown: breakdown,
+      upvotedBy: result.upvotedBy,
+      upvoteCount: result.upvoteCount,
+      upvoteWeights: result.upvoteWeights,
+      cantFindBy: result.cantFindBy,
+      cantFindCount: result.cantFindCount,
+      pressureScore: result.pressureScore,
+      pressureBreakdown: result.pressureBreakdown,
       updatedAt: new Date(),
     };
 
     // Community verification: when the weighted sum first crosses this report's
-    // threshold, promote reported → verified and append a DNA milestone.
-    // Append-only (arrayUnion) keeps the Firestore integrity rule satisfied.
+    // threshold via a NEWLY added upvote (including a switch from cant_find),
+    // promote reported → verified and append a DNA milestone. Append-only
+    // (arrayUnion) keeps the Firestore integrity rule satisfied.
     const threshold = issue.requiredUpvotesForVerification ?? VERIFICATION_THRESHOLD_NAMED;
-    if (adding && issue.status === "reported" && weightedUpvoteSum(next) >= threshold) {
+    if (
+      next === "upvote" &&
+      !wasUpvoter &&
+      issue.status === "reported" &&
+      weightedUpvoteSum(result) >= threshold
+    ) {
       update.status = "verified";
       update.dna = arrayUnion({
         id: crypto.randomUUID(),
@@ -471,28 +515,6 @@ export async function upvoteIssue(
     }
 
     tx.update(ref, update);
-  });
-}
-
-// Toggle this reporter's "can't find" flag. Keeps cantFindCount === cantFindBy.length.
-export async function cantFindIssue(issueId: string, reporterId: string): Promise<void> {
-  if (!reporterId) return;
-  const db = getDb();
-  const ref = doc(db, "issues", issueId);
-  await runTransaction(db, async (tx) => {
-    const snap = await tx.get(ref);
-    if (!snap.exists()) return;
-    const issue = issueFromSnapshot(snap.id, snap.data());
-    const cantFindBy = [...(issue.cantFindBy ?? [])];
-    const i = cantFindBy.indexOf(reporterId);
-    if (i >= 0) cantFindBy.splice(i, 1);
-    else cantFindBy.push(reporterId);
-
-    tx.update(ref, {
-      cantFindBy,
-      cantFindCount: cantFindBy.length,
-      updatedAt: new Date(),
-    });
   });
 }
 

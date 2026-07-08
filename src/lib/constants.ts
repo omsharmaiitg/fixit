@@ -1,5 +1,10 @@
 import type { IssueCategory, IssueStatus, AgingStatus } from "@/types";
 
+// sessionStorage flag — set once a visitor passes the landing page as a guest;
+// signed-in users skip the landing via auth state instead. Cleared on explicit
+// logout so the landing front door reappears only then.
+export const ENTERED_APP_KEY = "fixit_entered";
+
 export const CATEGORY_EMOJIS: Record<IssueCategory, string> = {
   road_damage: "🕳️",
   drainage_flooding: "🌊",

@@ -19,6 +19,7 @@ import {
 import { useAuth } from "@/contexts/AuthContext";
 import { useLocationContext } from "@/contexts/LocationContext";
 import { isNamedCity } from "@/lib/city";
+import { ENTERED_APP_KEY } from "@/lib/constants";
 import { getAllIssues } from "@/lib/firebaseHelpers";
 import {
   computeGamification,
@@ -95,6 +96,8 @@ export default function ProfilePage() {
     try {
       await signOut();
     } finally {
+      // Explicit logout is the one moment the landing front door reappears.
+      sessionStorage.removeItem(ENTERED_APP_KEY);
       router.push("/");
     }
   }

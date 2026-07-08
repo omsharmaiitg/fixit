@@ -21,7 +21,9 @@ import { SkeletonCard } from "@/components/SkeletonCard";
 import { FABButton } from "@/components/FABButton";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLocationContext } from "@/contexts/LocationContext";
+import { Landing } from "@/components/Landing";
 import { isNamedCity } from "@/lib/city";
+import { ENTERED_APP_KEY } from "@/lib/constants";
 import type { Issue } from "@/types";
 
 // Shown wherever the home city would appear when GPS is off/denied/unavailable.
@@ -67,7 +69,43 @@ function greetingForHour(h: number): string {
   return "Good night";
 }
 
+// ─── entry gate ───────────────────────────────────────────────────────────────
+// First-time, logged-out visitors get the landing page front door. One choice
+// ("Get started" → existing /auth flow, or "Continue as guest") marks the
+// session as entered; signed-in users skip it entirely. Explicit logout clears
+// the flag (profile page), so only then does the landing reappear.
 export default function HomePage() {
+  const { user, loading } = useAuth();
+  const [entered, setEntered] = useState<boolean | null>(null); // null = flag not read yet
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setEntered(sessionStorage.getItem(ENTERED_APP_KEY) === "1");
+  }, []);
+
+  if (user || entered) return <Feed />;
+  if (entered === null || loading) {
+    // Still resolving the session flag / auth state — a wordmark beat instead
+    // of flashing the feed at someone who's about to see the landing page.
+    return (
+      <div className="flex min-h-[100dvh] items-center justify-center">
+        <span className="font-display text-2xl font-extrabold tracking-tight text-primary-dark">
+          FixIt
+        </span>
+      </div>
+    );
+  }
+  return (
+    <Landing
+      onGuest={() => {
+        sessionStorage.setItem(ENTERED_APP_KEY, "1");
+        setEntered(true);
+      }}
+    />
+  );
+}
+
+function Feed() {
   const { user } = useAuth();
   // Single source of truth for where the user is and what city they're viewing.
   const {

@@ -18,7 +18,7 @@ import {
   uploadIssuePhoto,
   addIssuePhoto,
   appendDNAEntry,
-  upvoteIssue,
+  setVote,
 } from "@/lib/firebaseHelpers";
 import { CATEGORY_EMOJIS } from "@/lib/constants";
 import { getReporterId } from "@/lib/reporter";
@@ -234,7 +234,7 @@ export function TriageChat({
         actor: "You",
         ...(photoUrl ? { photoUrl } : {}),
       });
-      await upvoteIssue(duplicate.issue.id, getReporterId());
+      await setVote(duplicate.issue.id, getReporterId(), "upvote");
       router.push(`/issue/${duplicate.issue.id}`);
     } catch {
       setDupBusy(false);

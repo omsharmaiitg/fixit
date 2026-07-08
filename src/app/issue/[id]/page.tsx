@@ -17,13 +17,13 @@ import {
 import {
   getIssueById,
   getSeverityLabel,
-  upvoteIssue,
-  cantFindIssue,
+  setVote,
+  applyVoteLocal,
   confirmResolution,
   RESOLVE_CONFIRM_THRESHOLD,
   RESOLVE_CONTRADICT_THRESHOLD,
 } from "@/lib/firebaseHelpers";
-import { calculatePressureScore, BASELINE_WEIGHT } from "@/lib/pressureScore";
+import { BASELINE_WEIGHT } from "@/lib/pressureScore";
 import { resolveUpvoteWeight } from "@/lib/upvoteLocation";
 import { recomputeUserGamification } from "@/lib/gamification";
 import { getReporterId } from "@/lib/reporter";
@@ -41,7 +41,7 @@ import { IssueDNA } from "@/components/IssueDNA";
 import { BeforeAfterSlider } from "@/components/BeforeAfterSlider";
 import { useRequireAuth, LoginPrompt } from "@/components/LoginPrompt";
 import { useAuth } from "@/contexts/AuthContext";
-import type { Issue, IssueStatus } from "@/types";
+import type { Issue, IssueStatus, VoteState } from "@/types";
 
 const STEP_ORDER: IssueStatus[] = [
   "reported",
@@ -50,36 +50,6 @@ const STEP_ORDER: IssueStatus[] = [
   "in_progress",
   "resolved",
 ];
-
-// Toggle this reporter's upvote on a local copy of the issue, keeping
-// upvoteCount === upvotedBy.length, freezing the proximity weight on cast, and
-// recomputing pressure. Its own inverse (same weight), so calling it again
-// reverts an optimistic update.
-function toggleUpvoteLocal(issue: Issue, reporterId: string, weight: number): Issue {
-  const upvotedBy = [...(issue.upvotedBy ?? [])];
-  const weights = { ...(issue.upvoteWeights ?? {}) };
-  const i = upvotedBy.indexOf(reporterId);
-  if (i >= 0) {
-    upvotedBy.splice(i, 1);
-    delete weights[reporterId];
-  } else {
-    upvotedBy.push(reporterId);
-    weights[reporterId] = weight;
-  }
-  const next = { ...issue, upvotedBy, upvoteCount: upvotedBy.length, upvoteWeights: weights };
-  const { score, breakdown } = calculatePressureScore(next);
-  next.pressureScore = score;
-  next.pressureBreakdown = breakdown;
-  return next;
-}
-
-function toggleCantFindLocal(issue: Issue, reporterId: string): Issue {
-  const cantFindBy = [...(issue.cantFindBy ?? [])];
-  const i = cantFindBy.indexOf(reporterId);
-  if (i >= 0) cantFindBy.splice(i, 1);
-  else cantFindBy.push(reporterId);
-  return { ...issue, cantFindBy, cantFindCount: cantFindBy.length };
-}
 
 function StatusTimeline({ status }: { status: IssueStatus }) {
   const reopened = status === "reopened";
@@ -126,8 +96,7 @@ export default function IssueDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [reporterId, setReporterId] = useState("");
-  const [upBusy, setUpBusy] = useState(false);
-  const [cfBusy, setCfBusy] = useState(false);
+  const [voteBusy, setVoteBusy] = useState(false);
   const [resolveBusy, setResolveBusy] = useState(false);
   const { promptOpen, closePrompt, requireAuth } = useRequireAuth();
 
@@ -142,40 +111,35 @@ export default function IssueDetailPage() {
   const cantFindActive =
     reporterId !== "" && !!issue && (issue.cantFindBy ?? []).includes(reporterId);
 
-  // Toggle: optimistic local update (its own inverse on error), then persist.
-  // Both actions require login (gate runs before the optimistic update).
-  function handleUpvote() {
+  // Mutually-exclusive toggle. `desired` is where the tapped button wants to go;
+  // pressing the active button clears to null, otherwise it activates and the
+  // write deactivates the other side in the same operation. Optimistic update
+  // with a snapshot rollback (setVote rebuilds membership, so a partial swap
+  // never leaves both active). Both actions require login (gated first).
+  function castVote(desired: "upvote" | "cant_find") {
     requireAuth(async () => {
-      if (!reporterId || upBusy || !issue) return;
-      setUpBusy(true);
-      // No known location on this page — prompt once at tap, unless un-voting.
-      const removing = (issue.upvotedBy ?? []).includes(reporterId);
-      const weight = removing
-        ? BASELINE_WEIGHT
-        : await resolveUpvoteWeight(issue.location.lat, issue.location.lng);
-      setIssue((prev) => prev && toggleUpvoteLocal(prev, reporterId, weight));
+      if (!reporterId || voteBusy || !issue) return;
+      const active = (
+        desired === "upvote" ? issue.upvotedBy : issue.cantFindBy
+      ) ?? [];
+      const next: VoteState = active.includes(reporterId) ? null : desired;
+      setVoteBusy(true);
+      // No known location on this page — prompt once at tap, only for an upvote cast.
+      const weight =
+        next === "upvote"
+          ? await resolveUpvoteWeight(issue.location.lat, issue.location.lng)
+          : BASELINE_WEIGHT;
+      const prev = issue; // snapshot for rollback
+      setIssue((cur) => cur && applyVoteLocal(cur, reporterId, next, weight));
       try {
-        await upvoteIssue(id, reporterId, weight);
-        void recomputeUserGamification(reporterId).catch(() => {});
+        await setVote(id, reporterId, next, weight);
+        if (next === "upvote") {
+          void recomputeUserGamification(reporterId).catch(() => {});
+        }
       } catch {
-        setIssue((prev) => prev && toggleUpvoteLocal(prev, reporterId, weight));
+        setIssue(prev); // roll back to last server truth
       } finally {
-        setUpBusy(false);
-      }
-    });
-  }
-
-  function handleCantFind() {
-    requireAuth(async () => {
-      if (!reporterId || cfBusy) return;
-      setCfBusy(true);
-      setIssue((prev) => prev && toggleCantFindLocal(prev, reporterId));
-      try {
-        await cantFindIssue(id, reporterId);
-      } catch {
-        setIssue((prev) => prev && toggleCantFindLocal(prev, reporterId));
-      } finally {
-        setCfBusy(false);
+        setVoteBusy(false);
       }
     });
   }
@@ -357,8 +321,8 @@ export default function IssueDetailPage() {
               </span>
 
               <button
-                onClick={handleUpvote}
-                disabled={upBusy}
+                onClick={() => castVote("upvote")}
+                disabled={voteBusy}
                 aria-pressed={upvoteActive}
                 aria-label={upvoteActive ? "Remove your upvote" : "Upvote this issue"}
                 className={`ml-auto flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-semibold transition active:scale-95 disabled:opacity-60 ${
@@ -374,16 +338,22 @@ export default function IssueDetailPage() {
               </button>
 
               <button
-                onClick={handleCantFind}
-                disabled={cfBusy}
+                onClick={() => castVote("cant_find")}
+                disabled={voteBusy}
                 aria-pressed={cantFindActive}
-                aria-label="Report that you can't find this issue"
+                aria-label={
+                  cantFindActive
+                    ? "Remove your can't-find report"
+                    : "Report that you can't find this issue"
+                }
                 className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-semibold transition active:scale-95 disabled:opacity-60 ${
                   cantFindActive ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-muted"
                 }`}
               >
                 <SearchX size={16} strokeWidth={2.2} />
-                {cantFindActive ? "Can't find ✓" : "Can't find"}
+                Can&apos;t find
+                {issue.cantFindCount > 0 ? ` · ${issue.cantFindCount}` : ""}
+                {cantFindActive ? " ✓" : ""}
               </button>
             </div>
           </div>

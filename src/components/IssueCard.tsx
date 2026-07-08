@@ -5,7 +5,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { formatDistanceToNowStrict } from "date-fns";
 import { ArrowBigUp, Dna, MessageSquare, Clock, SearchX } from "lucide-react";
-import type { Issue } from "@/types";
+import type { Issue, VoteState } from "@/types";
 import {
   CATEGORY_EMOJIS,
   CATEGORY_LABELS,
@@ -18,8 +18,8 @@ import {
 import {
   getSeverityLabel,
   haversineDistance,
-  upvoteIssue,
-  cantFindIssue,
+  setVote,
+  applyVoteLocal,
 } from "@/lib/firebaseHelpers";
 import { getPressureColor, BASELINE_WEIGHT } from "@/lib/pressureScore";
 import { resolveUpvoteWeight } from "@/lib/upvoteLocation";
@@ -68,53 +68,63 @@ export function IssueCard({
     setReporterId(getReporterId());
   }, []);
 
-  // Active states are derived from the persisted arrays, so they're correct
-  // after a refresh and update live on the realtime feed. `busy` just guards
-  // against double-firing while the toggle write is in flight.
-  const upvoteActive = reporterId !== "" && (issue.upvotedBy ?? []).includes(reporterId);
-  const cantFindActive = reporterId !== "" && (issue.cantFindBy ?? []).includes(reporterId);
-  const [upBusy, setUpBusy] = useState(false);
-  const [cfBusy, setCfBusy] = useState(false);
+  // Optimistic override: on a tap we immediately swap in a locally-computed copy
+  // of the issue, then let the write reconcile. When fresh server state arrives
+  // for this card (a new feed snapshot ⇒ new `issue` prop), we drop the override
+  // so realtime truth wins; on a failed write we clear it explicitly to roll back.
+  const [override, setOverride] = useState<Issue | null>(null);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setOverride(null);
+  }, [issue]);
+  const view = override ?? issue;
+
+  // Active states are derived from the (optimistic or persisted) arrays, so
+  // they're correct after a refresh, update live on the realtime feed, and flip
+  // instantly on tap. A single `busy` flag guards both mutually-exclusive
+  // buttons while a vote write is in flight.
+  const upvoteActive = reporterId !== "" && (view.upvotedBy ?? []).includes(reporterId);
+  const cantFindActive = reporterId !== "" && (view.cantFindBy ?? []).includes(reporterId);
+  const [busy, setBusy] = useState(false);
   const { promptOpen, closePrompt, requireAuth } = useRequireAuth();
 
-  // The card is a <Link>; action buttons must not bubble into navigation.
-  // Both upvote and "can't find" are community signals that now require login
-  // (can't-find gated too, for consistency — it nudges status just like upvote).
-  function handleUpvote(e: React.MouseEvent) {
+  // One handler drives both buttons. `desired` is the state the tapped button
+  // wants to move TO; pressing the already-active button clears to null (toggle
+  // off), otherwise it activates and — because the write rebuilds membership —
+  // deactivates the other side in the same operation. The card is a <Link>, so
+  // action clicks must not bubble into navigation. Both are login-gated.
+  function castVote(desired: "upvote" | "cant_find", e: React.MouseEvent) {
     e.preventDefault();
     e.stopPropagation();
     requireAuth(async () => {
-      if (!reporterId || upBusy) return;
-      setUpBusy(true);
+      if (!reporterId || busy) return;
+      const active = desired === "upvote" ? upvoteActive : cantFindActive;
+      const next: VoteState = active ? null : desired;
+      setBusy(true);
       try {
         // Reuse the feed's location if we have it (no extra prompt); resolve the
-        // proximity weight only when casting (un-upvote ignores it).
-        const weight = upvoteActive
-          ? BASELINE_WEIGHT
-          : await resolveUpvoteWeight(
-              issue.location.lat,
-              issue.location.lng,
-              userLat,
-              userLng,
-            );
-        await upvoteIssue(issue.id, reporterId, weight);
-        void recomputeUserGamification(reporterId).catch(() => {});
+        // proximity weight only when casting an upvote (off/cant_find ignore it).
+        const weight =
+          next === "upvote"
+            ? await resolveUpvoteWeight(
+                issue.location.lat,
+                issue.location.lng,
+                userLat,
+                userLng,
+              )
+            : BASELINE_WEIGHT;
+        // Optimistic swap, then persist; roll back if the write fails.
+        setOverride(applyVoteLocal(view, reporterId, next, weight));
+        try {
+          await setVote(issue.id, reporterId, next, weight);
+          if (next === "upvote") {
+            void recomputeUserGamification(reporterId).catch(() => {});
+          }
+        } catch {
+          setOverride(null); // revert to the last server truth
+        }
       } finally {
-        setUpBusy(false);
-      }
-    });
-  }
-
-  function handleCantFind(e: React.MouseEvent) {
-    e.preventDefault();
-    e.stopPropagation();
-    requireAuth(async () => {
-      if (!reporterId || cfBusy) return;
-      setCfBusy(true);
-      try {
-        await cantFindIssue(issue.id, reporterId);
-      } finally {
-        setCfBusy(false);
+        setBusy(false);
       }
     });
   }
@@ -213,8 +223,8 @@ export function IssueCard({
           {canAct ? (
             <div className="mt-2 flex items-center gap-2 text-[11px] font-semibold">
               <button
-                onClick={handleUpvote}
-                disabled={upBusy}
+                onClick={(e) => castVote("upvote", e)}
+                disabled={busy}
                 aria-pressed={upvoteActive}
                 aria-label={upvoteActive ? "Remove your upvote" : "Upvote this issue"}
                 className={`flex items-center gap-1 rounded-full px-2 py-1 transition active:scale-95 disabled:opacity-60 ${
@@ -226,7 +236,7 @@ export function IssueCard({
                   strokeWidth={2.4}
                   fill={upvoteActive ? "currentColor" : "none"}
                 />
-                {issue.upvoteCount}
+                {view.upvoteCount}
               </button>
 
               {issue.discussion.length > 0 && (
@@ -237,16 +247,23 @@ export function IssueCard({
               )}
 
               <button
-                onClick={handleCantFind}
-                disabled={cfBusy}
+                onClick={(e) => castVote("cant_find", e)}
+                disabled={busy}
                 aria-pressed={cantFindActive}
-                aria-label="Report that you can't find this issue"
+                aria-label={
+                  cantFindActive
+                    ? "Remove your can't-find report"
+                    : "Report that you can't find this issue"
+                }
                 className={`ml-auto flex items-center gap-1 rounded-full px-2 py-1 transition active:scale-95 disabled:opacity-60 ${
                   cantFindActive ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-muted"
                 }`}
               >
                 <SearchX size={12} strokeWidth={2.2} />
-                {cantFindActive ? "Can't find ✓" : "Can't find"}
+                Can&apos;t find{cantFindActive ? " ✓" : ""}
+                {view.cantFindCount > 0 && (
+                  <span className="tabular-nums">{view.cantFindCount}</span>
+                )}
               </button>
             </div>
           ) : (
