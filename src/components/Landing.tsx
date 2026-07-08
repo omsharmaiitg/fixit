@@ -11,19 +11,15 @@
 import Link from "next/link";
 import { motion, useReducedMotion } from "motion/react";
 import {
-  Activity,
   ArrowRight,
   BarChart3,
   Camera,
-  CircleCheck,
-  CircleDot,
+  Crosshair,
   Gauge,
   ShieldCheck,
   Sparkles,
-  TrendingUp,
+  Users,
 } from "lucide-react";
-import { CATEGORY_EMOJIS, CATEGORY_LABELS } from "@/lib/constants";
-import type { IssueCategory } from "@/types";
 
 // Same reveal-on-scroll wrapper the dashboard uses. Local copy — the original
 // lives inside a page module, which Next.js pages can't export extras from.
@@ -95,104 +91,40 @@ function Ctas({ onGuest }: { onGuest: () => void }) {
   );
 }
 
-const STEPS: {
+// Feature walkthrough — the app's actual capabilities, no numbers or sample
+// data (nothing invented before we know the user's city). Rendered as divided
+// rows in one surface card, the dashboard's hotspot-list pattern.
+const FEATURES: {
   icon: React.ComponentType<{ size?: number; strokeWidth?: number }>;
   title: string;
-  line: string;
+  body: string;
 }[] = [
   {
     icon: Camera,
     title: "Report in seconds",
-    line: "An AI Triage Agent turns a photo and a sentence into a structured civic report.",
+    body: "Describe an issue in plain language and add a photo. An AI Triage Agent reads it, pinpoints the location on the map, and turns it into a structured civic record.",
   },
   {
     icon: Gauge,
-    title: "Urgency you can see",
-    line: "Every issue gets a public 0–100 Pressure Score that rises with neglect.",
+    title: "A public urgency score",
+    body: "Every issue carries a Pressure Score reflecting severity, how long it has gone unresolved, community verification, and live conditions. It rises the longer an issue is ignored and falls once it is acted on.",
   },
   {
-    icon: ShieldCheck,
-    title: "Kept honest",
-    line: "The community verifies issues and an autonomous Watchtower Agent governs the city.",
+    icon: Users,
+    title: "Community verification",
+    body: "Neighbours confirm real issues, so the record stays trustworthy. Reporting and verification are tied to your live location, keeping the signal honest.",
+  },
+  {
+    icon: Crosshair,
+    title: "An autonomous Watchtower",
+    body: "A second agent continuously reviews the city, groups recurring problems into zones, forecasts where new issues are likely, and writes a weekly civic summary.",
+  },
+  {
+    icon: BarChart3,
+    title: "A transparent public record",
+    body: "Every report, verification, and resolution is public and permanent. The full Impact Dashboard is open to anyone — no login required — so accountability comes from visibility.",
   },
 ];
-
-// ─── product glimpse (static, dashboard-styled preview) ──────────────────────
-
-const GLIMPSE_KPIS = [
-  { label: "Total reported", value: 128, icon: Activity, tone: "text-primary" },
-  { label: "Resolved", value: 43, icon: CircleCheck, tone: "text-[#16a34a]" },
-  { label: "Still open", value: 85, icon: CircleDot, tone: "text-[#ea580c]" },
-  { label: "In the pipeline", value: 27, icon: TrendingUp, tone: "text-primary" },
-];
-
-// Same thresholds/colors as the dashboard's PressurePill.
-const GLIMPSE_ROWS: { cat: IssueCategory; title: string; pressure: number; color: string }[] = [
-  { cat: "road_damage", title: "Deep pothole near the school gate", pressure: 82, color: "#dc2626" },
-  { cat: "street_lighting", title: "Dark stretch along the market road", pressure: 64, color: "#ea580c" },
-  { cat: "waste_garbage", title: "Overflowing bins at the bus stand", pressure: 38, color: "#ca8a04" },
-];
-
-function Glimpse() {
-  return (
-    <div
-      className="pointer-events-none select-none overflow-hidden rounded-2xl bg-surface shadow-card-lg"
-      aria-hidden
-    >
-      <div className="border-b border-slate-200/70 px-5 py-3">
-        <p className="font-mono text-[11px] font-semibold uppercase tracking-[0.18em] text-primary">
-          FixIt · Impact · Your city
-        </p>
-      </div>
-      <div className="grid grid-cols-2 divide-x divide-y divide-slate-200/70 md:grid-cols-4 md:divide-y-0">
-        {GLIMPSE_KPIS.map((it) => {
-          const Icon = it.icon;
-          return (
-            <div key={it.label} className="p-4 md:p-5">
-              <Icon size={17} strokeWidth={2.2} className={it.tone} />
-              <p className="mt-3 font-display text-3xl font-extrabold tabular-nums text-foreground">
-                {it.value}
-              </p>
-              <p className="mt-0.5 text-xs font-medium text-muted">{it.label}</p>
-            </div>
-          );
-        })}
-      </div>
-      <div className="border-t border-slate-200/70 px-5 py-4">
-        <div className="flex h-3 w-full overflow-hidden rounded-full bg-slate-100">
-          <div className="h-full w-[34%] rounded-l-full bg-[#16a34a]" />
-        </div>
-        <div className="mt-2.5 flex items-center gap-5 text-xs">
-          <span className="flex items-center gap-1.5 font-medium text-foreground">
-            <span className="h-2 w-2 rounded-full bg-[#16a34a]" /> 43 resolved
-          </span>
-          <span className="flex items-center gap-1.5 font-medium text-muted">
-            <span className="h-2 w-2 rounded-full bg-slate-300" /> 85 still open
-          </span>
-        </div>
-      </div>
-      <div className="divide-y divide-slate-200/70 border-t border-slate-200/70">
-        {GLIMPSE_ROWS.map((r) => (
-          <div key={r.cat} className="flex items-center gap-3 p-4">
-            <span className="text-lg" aria-hidden>
-              {CATEGORY_EMOJIS[r.cat]}
-            </span>
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-semibold text-foreground">{r.title}</p>
-              <p className="font-mono text-xs text-muted">{CATEGORY_LABELS[r.cat]}</p>
-            </div>
-            <span
-              className="shrink-0 rounded-full px-2.5 py-1 font-mono text-xs font-bold tabular-nums"
-              style={{ backgroundColor: `${r.color}1a`, color: r.color }}
-            >
-              {r.pressure} pressure
-            </span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
 
 // ─── page ────────────────────────────────────────────────────────────────────
 
@@ -229,21 +161,29 @@ export function Landing({ onGuest }: { onGuest: () => void }) {
             </div>
           </Reveal>
 
-          {/* how it works */}
+          {/* how it works — feature walkthrough */}
           <Reveal>
-            <SectionHeading icon={Sparkles} title="How FixIt works" />
-            <div className="grid gap-4 md:grid-cols-3">
-              {STEPS.map((s) => {
-                const Icon = s.icon;
+            <SectionHeading
+              icon={Sparkles}
+              title="How FixIt works"
+              subtitle="From a photo on the street to a public record the whole city can hold accountable."
+            />
+            <div className="divide-y divide-slate-200/70 overflow-hidden rounded-2xl bg-surface shadow-card">
+              {FEATURES.map((f) => {
+                const Icon = f.icon;
                 return (
-                  <div key={s.title} className="rounded-2xl bg-surface p-6 shadow-card">
-                    <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
-                      <Icon size={22} strokeWidth={2.2} />
+                  <div key={f.title} className="flex items-start gap-4 p-5 md:p-6">
+                    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+                      <Icon size={20} strokeWidth={2.2} />
                     </div>
-                    <h3 className="mt-4 font-display text-lg font-bold text-foreground">
-                      {s.title}
-                    </h3>
-                    <p className="mt-1.5 text-sm leading-relaxed text-muted">{s.line}</p>
+                    <div className="min-w-0">
+                      <h3 className="font-display text-base font-bold text-foreground">
+                        {f.title}
+                      </h3>
+                      <p className="mt-1 max-w-2xl text-sm leading-relaxed text-muted">
+                        {f.body}
+                      </p>
+                    </div>
                   </div>
                 );
               })}
@@ -255,16 +195,6 @@ export function Landing({ onGuest }: { onGuest: () => void }) {
             <p className="text-center font-mono text-xs font-semibold uppercase tracking-[0.18em] text-muted">
               Built on Google Gemini · Firebase · Google Maps · Cloud Run
             </p>
-          </Reveal>
-
-          {/* product glimpse */}
-          <Reveal>
-            <SectionHeading
-              icon={BarChart3}
-              title="The public record, live"
-              subtitle="Every city gets an Impact Dashboard like this — every report, verification and resolution, open to anyone, no login."
-            />
-            <Glimpse />
           </Reveal>
 
           {/* final CTA */}
